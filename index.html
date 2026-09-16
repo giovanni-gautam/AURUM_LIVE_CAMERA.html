@@ -25,6 +25,7 @@ button{border:0;border-radius:12px;padding:13px 10px;font-weight:800;cursor:poin
 .capture{background:#08714f;color:#fff}
 .retake{background:#e9f0f7;color:#102b50;display:none}
 .close{background:#fff;border:1px solid #dbe4ef;color:#102b50;margin-top:9px;width:100%}
+body.embedded-camera .close{display:none}
 .msg{text-align:center;color:#b3261e;font-size:12px;font-weight:700;min-height:18px;margin-top:8px}
 canvas{display:none}
 @media(max-width:430px){.info{grid-template-columns:1fr}.wrap{padding:10px}.card{padding:13px}}
@@ -65,6 +66,9 @@ const params=new URLSearchParams(location.search);
 const tm=params.get('tm')||'-';
 const hq=params.get('hq')||'-';
 const area=params.get('area')||'-';
+const exact=params.get('exact')||area||'-';
+const embedded=params.get('embedded')==='1';
+if(embedded) document.body.classList.add('embedded-camera');
 
 document.getElementById('tm').textContent=tm;
 document.getElementById('hq').textContent=hq;
@@ -183,8 +187,10 @@ function capture(){
 
   const image=canvas.toDataURL('image/jpeg',0.88);
 
-  if(window.opener && !window.opener.closed){
-    window.opener.postMessage({
+  const target = embedded ? window.parent : window.opener;
+
+  if(target && target !== window && !target.closed){
+    target.postMessage({
       type:'AURUM_GPS_SELFIE_CAPTURE',
       image:image
     },'*');
@@ -193,14 +199,16 @@ function capture(){
     document.getElementById('capture').disabled=true;
     document.getElementById('retake').style.display='block';
 
-    setTimeout(()=>{
-      if(stream) stream.getTracks().forEach(t=>t.stop());
-      window.close();
-    },500);
+    if(!embedded){
+      setTimeout(()=>{
+        if(stream) stream.getTracks().forEach(t=>t.stop());
+        window.close();
+      },500);
+    }
 
   }else{
     busy=false;
-    document.getElementById('msg').textContent='Please keep the Aurum Sync page open and open this camera from there.';
+    document.getElementById('msg').textContent='Please open the camera from Aurum Sync.';
   }
 }
 
