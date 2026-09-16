@@ -696,44 +696,169 @@ let gpsCountdownTimer = null;
 /* Standalone GitHub Pages frontend -> Google Apps Script backend */
 const API_URL = 'https://script.google.com/macros/s/AKfycbwbfN30Nv9pxq0MOQVW-d8TXnHITrTH4Bz1kzB7VjzK0Wm6aJx4WKWZZ434ZOorfbS8/exec';
 
-/* Lightweight replacement for google.script.run when this page is hosted on GitHub Pages. */
-const google = { script: { run: (() => {
-  let success = null, failure = null;
-  const api = new Proxy({}, {
-    get(target, prop){
-      if(prop === "withSuccessHandler") return fn => { success = fn; return api; };
-      if(prop === "withFailureHandler") return fn => { failure = fn; return api; };
-      return (...args) => apiCall(prop, args, success, failure);
-    }
-  });
-  return api;
-})() } };
+/* =====================================================
+   GITHUB -> APPS SCRIPT BRIDGE
+   GET  = JSONP (no CORS dependency)
+   POST = hidden form (no CORS dependency)
+===================================================== */
+const google = {
+  script: {
+    run: (() => {
+      let successHandler = null;
+      let failureHandler = null;
 
-function apiCall(action, args, success, failure){
-  const readActions = new Set(["getTMData","getDoctorList","getGPSLocationDetails","getGPSLocationName"]);
-  if(readActions.has(action)){
-    const cb = "aurumCB_" + Date.now() + "_" + Math.floor(Math.random()*100000);
-    const script = document.createElement("script");
-    window[cb] = function(data){
-      try { if(success) success(data); } finally { delete window[cb]; script.remove(); }
+      const api = new Proxy({}, {
+        get(target, prop) {
+          if (prop === 'withSuccessHandler') {
+            return function(fn) {
+              successHandler = typeof fn === 'function' ? fn : null;
+              return api;
+            };
+          }
+
+          if (prop === 'withFailureHandler') {
+            return function(fn) {
+              failureHandler = typeof fn === 'function' ? fn : null;
+              return api;
+            };
+          }
+
+          return function(...args) {
+            const ok = successHandler;
+            const fail = failureHandler;
+            successHandler = null;
+            failureHandler = null;
+            apiCall(String(prop), args, ok, fail);
+          };
+        }
+      });
+
+      return api;
+    })()
+  }
+};
+
+function apiCall(action, args, success, failure) {
+  const readActions = new Set([
+    'getTMData',
+    'getDoctorList',
+    'getGPSLocationDetails',
+    'getGPSLocationName'
+  ]);
+
+  /* ---------------- GET / JSONP ---------------- */
+  if (readActions.has(action)) {
+    const callbackName =
+      'aurumCB_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
+
+    const script = document.createElement('script');
+    let finished = false;
+
+    const cleanup = function() {
+      if (finished) return;
+      finished = true;
+      try { delete window[callbackName]; } catch (_) {}
+      if (script.parentNode) script.parentNode.removeChild(script);
     };
-    script.onerror = function(){
-      delete window[cb]; script.remove(); if(failure) failure(new Error("Unable to contact Aurum Sync server."));
+
+    window[callbackName] = function(data) {
+      cleanup();
+      if (typeof success === 'function') success(data);
     };
+
+    script.onerror = function() {
+      cleanup();
+      if (typeof failure === 'function') {
+        failure(new Error('Unable to contact Aurum Sync server.'));
+      }
+    };
+
     const params = new URLSearchParams();
-    params.set("api", action); params.set("callback", cb);
-    args.forEach((v,i)=> params.set("arg"+i, typeof v === "string" ? v : JSON.stringify(v)));
-    script.src = API_URL + "?" + params.toString();
+    params.set('api', action);
+    params.set('callback', callbackName);
+    params.set('_', String(Date.now()));
+
+    (args || []).forEach(function(value, index) {
+      params.set(
+        'arg' + index,
+        typeof value === 'string' ? value : JSON.stringify(value)
+      );
+    });
+
+    script.src = API_URL + '?' + params.toString();
+    script.async = true;
     document.head.appendChild(script);
+
+    /* Hard timeout so the loader never stays forever. */
+    setTimeout(function() {
+      if (!finished) {
+        cleanup();
+        if (typeof failure === 'function') {
+          failure(new Error('Unable to contact Aurum Sync server.'));
+        }
+      }
+    }, 20000);
+
     return;
   }
-  fetch(API_URL, {
-    method:"POST",
-    mode:"no-cors",
-    headers:{"Content-Type":"text/plain;charset=UTF-8"},
-    body:JSON.stringify({api:action,args:args})
-  }).then(()=>{ if(success) success("Submitted successfully."); })
-    .catch(err=>{ if(failure) failure(err); });
+
+  /* ---------------- POST / hidden iframe ---------------- */
+  const frameName = 'aurumPostFrame_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
+  const iframe = document.createElement('iframe');
+  iframe.name = frameName;
+  iframe.id = frameName;
+  iframe.style.display = 'none';
+  document.body.appendChild(iframe);
+
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = API_URL;
+  form.target = frameName;
+  form.style.display = 'none';
+
+  function addHidden(name, value) {
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = name;
+    input.value = value;
+    form.appendChild(input);
+  }
+
+  addHidden('api', action);
+  (args || []).forEach(function(value, index) {
+    addHidden(
+      'arg' + index,
+      typeof value === 'string' ? value : JSON.stringify(value)
+    );
+  });
+
+  let completed = false;
+
+  iframe.onload = function() {
+    if (completed) return;
+    completed = true;
+    setTimeout(function() {
+      if (form.parentNode) form.parentNode.removeChild(form);
+      if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+    }, 500);
+
+    if (typeof success === 'function') {
+      success('Submitted successfully.');
+    }
+  };
+
+  iframe.onerror = function() {
+    if (completed) return;
+    completed = true;
+    if (form.parentNode) form.parentNode.removeChild(form);
+    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+    if (typeof failure === 'function') {
+      failure(new Error('Submission failed.'));
+    }
+  };
+
+  document.body.appendChild(form);
+  form.submit();
 }
 
 /* =====================================================
