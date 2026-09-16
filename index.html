@@ -658,157 +658,84 @@ function goBack(){
 
 async function submitCapture(image){
 
-  const status =
-    document.getElementById("status");
+  const status = document.getElementById("status");
+  const msg = document.getElementById("msg");
 
-  const msg =
-    document.getElementById("msg");
-
-
-  if(
-    !returnUrl ||
-    !tmCode ||
-    !latitude ||
-    !longitude
-  ){
-
-    status.textContent =
-      "Selfie captured";
-
-
-    msg.textContent =
-      "Return information is missing. Please reopen LIVE GPS SELFIE from Aurum Sync.";
-
-
+  if(!image){
+    status.textContent = "Capture failed";
+    status.style.color = "#b3261e";
+    msg.textContent = "No selfie image was created. Please try again.";
+    msg.style.color = "#b3261e";
     busy = false;
-
     return;
-
   }
 
-
-  status.textContent =
-    "Submitting LIVE GPS SELFIE...";
-
-
-  msg.textContent =
-    "Please wait...";
-
-
-  msg.style.color =
-    "#08714f";
-
+  status.textContent = "✓ Selfie captured";
+  status.style.color = "#08714f";
+  msg.textContent = "Sending selfie back to Aurum Sync...";
+  msg.style.color = "#08714f";
 
   try{
 
-    const body =
-      new URLSearchParams();
+    if(!window.opener || window.opener.closed){
+      throw new Error("Aurum Sync window is not available. Please close this camera and reopen LIVE GPS SELFIE from Aurum Sync.");
+    }
 
-
-    body.append(
-      "tmCode",
-      tmCode
-    );
-
-
-    body.append(
-      "latitude",
-      latitude
-    );
-
-
-    body.append(
-      "longitude",
-      longitude
-    );
-
-
-    body.append(
-      "image",
-      image
-    );
-
-
-    body.append(
-      "area",
-      area
-    );
-
-
-    body.append(
-      "exactLocation",
-      exact
-    );
-
-
-    await fetch(
-      returnUrl,
+    /*
+      IMPORTANT:
+      Do NOT fetch() the Apps Script URL from GitHub Pages.
+      Send the captured image back to the already-open Aurum Sync window.
+      Aurum Sync will save it using google.script.run.
+    */
+    window.opener.postMessage(
       {
-        method:"POST",
-        mode:"no-cors",
-        body:body,
-        keepalive:true
-      }
+        type: "AURUM_GPS_SELFIE_CAPTURE",
+        image: image,
+        tmCode: tmCode,
+        latitude: latitude,
+        longitude: longitude,
+        area: area,
+        exactLocation: exact
+      },
+      "*"
     );
-
-
-    status.textContent =
-      "✓ Selfie submitted successfully";
-
-
-    msg.textContent =
-      "Returning to Aurum Sync...";
-
 
     stopCamera();
 
+    status.textContent = "✓ Selfie sent to Aurum Sync";
+    status.style.color = "#08714f";
+    msg.textContent = "Returning to Aurum Sync...";
+    msg.style.color = "#08714f";
 
-    setTimeout(
-      function(){
+    setTimeout(function(){
+      try{
+        window.opener.focus();
+      }catch(e){}
 
-        const backUrl =
-          returnUrl +
-          (
-            returnUrl.indexOf("?") === -1
-              ? "?"
-              : "&"
-          ) +
-          "gpsDone=1";
+      try{
+        window.close();
+      }catch(e){}
 
-
-        window.location.href =
-          backUrl;
-
-      },
-      900
-    );
-
+      /*
+        Some browsers may refuse script-close in unusual navigation cases.
+        Keep a clean success screen instead of using fetch().
+      */
+      if(!window.closed){
+        status.textContent = "✓ Selfie sent successfully";
+        msg.textContent = "Return to the Aurum Sync window to complete submission.";
+      }
+    }, 500);
 
   }catch(e){
 
-    console.error(
-      "Submission error:",
-      e
-    );
+    console.error("Transfer error:", e);
 
-
-    status.textContent =
-      "Submission failed";
-
-
-    msg.textContent =
-      "Please try again. " +
-      (e.message || "");
-
-
-    msg.style.color =
-      "#b3261e";
-
-
+    status.textContent = "Transfer failed";
+    status.style.color = "#b3261e";
+    msg.textContent = e.message || "Please reopen LIVE GPS SELFIE from Aurum Sync.";
+    msg.style.color = "#b3261e";
     busy = false;
-
   }
-
 }
 
 
