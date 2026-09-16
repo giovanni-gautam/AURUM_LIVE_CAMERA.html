@@ -67,12 +67,15 @@ const tm=params.get('tm')||'-';
 const hq=params.get('hq')||'-';
 const area=params.get('area')||'-';
 const exact=params.get('exact')||area||'-';
-const embedded=params.get('embedded')==='1';
-if(embedded) document.body.classList.add('embedded-camera');
+const latitude=params.get('lat')||'';
+const longitude=params.get('lon')||'';
+const tmCode=params.get('tmCode')||'';
+const returnUrl=params.get('returnUrl')||'';
+
 
 document.getElementById('tm').textContent=tm;
 document.getElementById('hq').textContent=hq;
-document.getElementById('area').textContent=area;
+document.getElementById('area').textContent=exact;
 
 let stream=null;
 let busy=false;
@@ -109,8 +112,9 @@ async function startCamera(){
       audio:false
     });
 
-    document.getElementById('video').srcObject=stream;
-    await document.getElementById('video').play();
+    const video=document.getElementById('video');
+    video.srcObject=stream;
+    await video.play();
 
     status.textContent='✓ Camera ready — capture when ready';
     captureBtn.disabled=false;
@@ -118,6 +122,55 @@ async function startCamera(){
   }catch(e){
     status.textContent='Camera permission required';
     msg.textContent=e.message||'Please allow camera access.';
+  }
+}
+
+async function submitCapture(image){
+  const status=document.getElementById('status');
+  const msg=document.getElementById('msg');
+
+  if(!returnUrl || !tmCode || !latitude || !longitude){
+    status.textContent='Selfie captured';
+    msg.textContent='Return information is missing. Please reopen LIVE GPS SELFIE from Aurum Sync.';
+    return;
+  }
+
+  status.textContent='Submitting LIVE GPS SELFIE...';
+  msg.textContent='Please wait...';
+  msg.style.color='#08714f';
+
+  try{
+    const body=new URLSearchParams();
+    body.append('tmCode',tmCode);
+    body.append('latitude',latitude);
+    body.append('longitude',longitude);
+    body.append('image',image);
+    body.append('area',area);
+    body.append('exactLocation',exact);
+
+    /* Simple form POST avoids a CORS preflight. */
+    await fetch(returnUrl,{
+      method:'POST',
+      mode:'no-cors',
+      body:body,
+      keepalive:true
+    });
+
+    status.textContent='✓ Selfie submitted successfully';
+    msg.textContent='Returning to Aurum Sync...';
+
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+
+    setTimeout(function(){
+      const backUrl = returnUrl + (returnUrl.indexOf('?') === -1 ? '?' : '&') + 'gpsDone=1';
+      window.location.href=backUrl;
+    },900);
+
+  }catch(e){
+    status.textContent='Submission failed';
+    msg.textContent='Please try again. '+(e.message||'');
+    msg.style.color='#b3261e';
+    busy=false;
   }
 }
 
@@ -143,73 +196,56 @@ function capture(){
   ctx.drawImage(video,0,0,canvas.width,canvas.height);
   ctx.restore();
 
-  /* Add verification stamp to captured selfie */
-  const stampHeight = Math.max(150, Math.round(canvas.height * 0.20));
-  const stampY = canvas.height - stampHeight;
+  /* Verification stamp */
+  const stampHeight=Math.max(170,Math.round(canvas.height*0.22));
+  const stampY=canvas.height-stampHeight;
 
   ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.72)';
-  ctx.fillRect(0, stampY, canvas.width, stampHeight);
+  ctx.fillStyle='rgba(0,0,0,0.76)';
+  ctx.fillRect(0,stampY,canvas.width,stampHeight);
 
-  const pad = Math.max(18, Math.round(canvas.width * 0.025));
-  const titleSize = Math.max(24, Math.round(canvas.width * 0.035));
-  const textSize = Math.max(18, Math.round(canvas.width * 0.024));
+  const pad=Math.max(18,Math.round(canvas.width*0.025));
+  const titleSize=Math.max(24,Math.round(canvas.width*0.035));
+  const textSize=Math.max(18,Math.round(canvas.width*0.023));
 
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '700 ' + titleSize + 'px Arial';
-  ctx.fillText('AURUM • LIVE GPS VERIFIED', pad, stampY + titleSize + 10);
+  ctx.fillStyle='#ffffff';
+  ctx.font='700 '+titleSize+'px Arial';
+  ctx.fillText('AURUM • LIVE GPS VERIFIED',pad,stampY+titleSize+10);
 
-  ctx.font = '600 ' + textSize + 'px Arial';
-  ctx.fillText('TM: ' + tm, pad, stampY + titleSize + textSize + 24);
-  ctx.fillText('HQ: ' + hq, pad, stampY + titleSize + (textSize * 2) + 38);
+  ctx.font='600 '+textSize+'px Arial';
+  ctx.fillText('TM: '+tm,pad,stampY+titleSize+textSize+25);
+  ctx.fillText('HQ: '+hq,pad,stampY+titleSize+(textSize*2)+40);
 
-  const maxWidth = canvas.width - (pad * 2);
-  const locationPrefix = 'LOCATION: ';
-  let locationText = area || 'Location captured';
-  let line = locationPrefix;
-  let y = stampY + titleSize + (textSize * 3) + 52;
-  const words = locationText.split(' ');
+  ctx.font='600 '+Math.max(16,Math.round(canvas.width*0.020))+'px Arial';
 
-  ctx.font = '500 ' + Math.max(16, Math.round(canvas.width * 0.020)) + 'px Arial';
-  for (const word of words) {
-    const test = line + word + ' ';
-    if (ctx.measureText(test).width > maxWidth && line !== locationPrefix) {
-      ctx.fillText(line.trim(), pad, y);
-      y += Math.max(22, Math.round(canvas.width * 0.026));
-      line = '    ' + word + ' ';
-    } else {
-      line = test;
+  const maxWidth=canvas.width-(pad*2);
+  let line='LOCATION: ';
+  let y=stampY+titleSize+(textSize*3)+55;
+  const words=(exact||area||'Location captured').split(' ');
+
+  for(const word of words){
+    const test=line+word+' ';
+    if(ctx.measureText(test).width>maxWidth && line!=='LOCATION: '){
+      ctx.fillText(line.trim(),pad,y);
+      y+=Math.max(22,Math.round(canvas.width*0.026));
+      line='    '+word+' ';
+    }else{
+      line=test;
     }
   }
-  ctx.fillText(line.trim(), pad, y);
+  ctx.fillText(line.trim(),pad,y);
 
+  ctx.font='500 '+Math.max(15,Math.round(canvas.width*0.018))+'px Arial';
+  const dt=new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  ctx.fillText(dt,pad,stampY+stampHeight-12);
   ctx.restore();
 
   const image=canvas.toDataURL('image/jpeg',0.88);
 
-  const target = embedded ? window.parent : window.opener;
+  document.getElementById('capture').disabled=true;
+  document.getElementById('retake').style.display='none';
 
-  if(target && target !== window && !target.closed){
-    target.postMessage({
-      type:'AURUM_GPS_SELFIE_CAPTURE',
-      image:image
-    },'*');
-
-    document.getElementById('status').textContent='✓ Selfie captured successfully';
-    document.getElementById('capture').disabled=true;
-    document.getElementById('retake').style.display='block';
-
-    if(!embedded){
-      setTimeout(()=>{
-        if(stream) stream.getTracks().forEach(t=>t.stop());
-        window.close();
-      },500);
-    }
-
-  }else{
-    busy=false;
-    document.getElementById('msg').textContent='Please open the camera from Aurum Sync.';
-  }
+  submitCapture(image);
 }
 
 window.addEventListener('beforeunload',()=>{
