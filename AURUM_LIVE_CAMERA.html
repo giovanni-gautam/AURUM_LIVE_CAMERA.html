@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Aurum • Live GPS Camera</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f3f8fc;font-family:Arial,sans-serif;color:#102b50;display:flex;justify-content:center;min-height:100vh}
+.wrap{width:min(560px,100%);padding:18px}
+.card{background:#fff;border:1px solid #dbe4ef;border-radius:22px;padding:18px;box-shadow:0 16px 40px rgba(10,45,80,.12)}
+h1{font-size:24px;text-align:center;margin:4px 0 4px}
+.sub{text-align:center;color:#70809a;font-size:13px;margin:0 0 15px}
+.info{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.info div{background:#f5f8fc;border:1px solid #dbe4ef;border-radius:12px;padding:9px}
+.info small{display:block;color:#70809a;font-size:9px;font-weight:800;margin-bottom:4px}
+.info strong{font-size:12px;line-height:1.25}
+.camera{position:relative;background:#061d30;border-radius:18px;overflow:hidden;aspect-ratio:4/3}
+video{width:100%;height:100%;object-fit:cover;display:block;transform:scaleX(-1)}
+.badge{position:absolute;left:12px;top:12px;background:#06111c;color:#fff;border-radius:18px;padding:7px 10px;font-size:10px;font-weight:800}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#ef3b35;margin-right:5px}
+.status{text-align:center;font-size:12px;margin:12px 0;color:#08714f;font-weight:700;min-height:16px}
+.actions{display:flex;gap:9px}
+button{border:0;border-radius:12px;padding:13px 10px;font-weight:800;cursor:pointer;flex:1;font-size:13px}
+.capture{background:#08714f;color:#fff}
+.retake{background:#e9f0f7;color:#102b50;display:none}
+.close{background:#fff;border:1px solid #dbe4ef;color:#102b50;margin-top:9px;width:100%}
+.msg{text-align:center;color:#b3261e;font-size:12px;font-weight:700;min-height:18px;margin-top:8px}
+canvas{display:none}
+@media(max-width:430px){.info{grid-template-columns:1fr}.wrap{padding:10px}.card{padding:13px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>LIVE GPS SELFIE</h1>
+    <p class="sub">Aurum • Live camera capture</p>
+
+    <div class="info">
+      <div><small>TM NAME</small><strong id="tm">-</strong></div>
+      <div><small>HQ</small><strong id="hq">-</strong></div>
+      <div style="grid-column:1/-1"><small>EXACT LOCATION</small><strong id="area">-</strong></div>
+    </div>
+
+    <div class="camera">
+      <video id="video" autoplay playsinline muted></video>
+      <div class="badge"><span class="dot"></span>LIVE CAMERA</div>
+    </div>
+
+    <div id="status" class="status">Starting camera...</div>
+
+    <div class="actions">
+      <button id="capture" class="capture" onclick="capture()" disabled>📷 CAPTURE LIVE SELFIE</button>
+      <button id="retake" class="retake" onclick="startCamera()">RETAKE</button>
+    </div>
+
+    <button class="close" onclick="window.close()">CLOSE CAMERA</button>
+    <div id="msg" class="msg"></div>
+    <canvas id="canvas"></canvas>
+  </div>
+</div>
+
+<script>
+const params=new URLSearchParams(location.search);
+const tm=params.get('tm')||'-';
+const hq=params.get('hq')||'-';
+const area=params.get('area')||'-';
+
+document.getElementById('tm').textContent=tm;
+document.getElementById('hq').textContent=hq;
+document.getElementById('area').textContent=area;
+
+let stream=null;
+let busy=false;
+
+async function startCamera(){
+  const status=document.getElementById('status');
+  const msg=document.getElementById('msg');
+  const captureBtn=document.getElementById('capture');
+  const retakeBtn=document.getElementById('retake');
+
+  msg.textContent='';
+  captureBtn.disabled=true;
+  retakeBtn.style.display='none';
+
+  try{
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+
+    if(!window.isSecureContext){
+      throw new Error('Camera requires a secure HTTPS page.');
+    }
+
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      throw new Error('Camera API is not available in this browser.');
+    }
+
+    status.textContent='Requesting camera permission...';
+
+    stream=await navigator.mediaDevices.getUserMedia({
+      video:{
+        facingMode:{ideal:'user'},
+        width:{ideal:1280},
+        height:{ideal:960}
+      },
+      audio:false
+    });
+
+    document.getElementById('video').srcObject=stream;
+    await document.getElementById('video').play();
+
+    status.textContent='✓ Camera ready — capture when ready';
+    captureBtn.disabled=false;
+
+  }catch(e){
+    status.textContent='Camera permission required';
+    msg.textContent=e.message||'Please allow camera access.';
+  }
+}
+
+function capture(){
+  if(busy || !stream) return;
+  busy=true;
+
+  const video=document.getElementById('video');
+  const canvas=document.getElementById('canvas');
+  const ctx=canvas.getContext('2d');
+
+  if(!video.videoWidth){
+    busy=false;
+    return;
+  }
+
+  canvas.width=video.videoWidth;
+  canvas.height=video.videoHeight;
+
+  ctx.save();
+  ctx.translate(canvas.width,0);
+  ctx.scale(-1,1);
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  ctx.restore();
+
+  const image=canvas.toDataURL('image/jpeg',0.88);
+
+  if(window.opener && !window.opener.closed){
+    window.opener.postMessage({
+      type:'AURUM_GPS_SELFIE_CAPTURE',
+      image:image
+    },'*');
+
+    document.getElementById('status').textContent='✓ Selfie captured successfully';
+    document.getElementById('capture').disabled=true;
+    document.getElementById('retake').style.display='block';
+
+    setTimeout(()=>{
+      if(stream) stream.getTracks().forEach(t=>t.stop());
+      window.close();
+    },500);
+
+  }else{
+    busy=false;
+    document.getElementById('msg').textContent='Please keep the Aurum Sync page open and open this camera from there.';
+  }
+}
+
+window.addEventListener('beforeunload',()=>{
+  if(stream) stream.getTracks().forEach(t=>t.stop());
+});
+
+startCamera();
+</script>
+</body>
+</html>
