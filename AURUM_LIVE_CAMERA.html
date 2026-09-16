@@ -139,6 +139,48 @@ function capture(){
   ctx.drawImage(video,0,0,canvas.width,canvas.height);
   ctx.restore();
 
+  /* Add verification stamp to captured selfie */
+  const stampHeight = Math.max(150, Math.round(canvas.height * 0.20));
+  const stampY = canvas.height - stampHeight;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.72)';
+  ctx.fillRect(0, stampY, canvas.width, stampHeight);
+
+  const pad = Math.max(18, Math.round(canvas.width * 0.025));
+  const titleSize = Math.max(24, Math.round(canvas.width * 0.035));
+  const textSize = Math.max(18, Math.round(canvas.width * 0.024));
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '700 ' + titleSize + 'px Arial';
+  ctx.fillText('AURUM • LIVE GPS VERIFIED', pad, stampY + titleSize + 10);
+
+  ctx.font = '600 ' + textSize + 'px Arial';
+  ctx.fillText('TM: ' + tm, pad, stampY + titleSize + textSize + 24);
+  ctx.fillText('HQ: ' + hq, pad, stampY + titleSize + (textSize * 2) + 38);
+
+  const maxWidth = canvas.width - (pad * 2);
+  const locationPrefix = 'LOCATION: ';
+  let locationText = area || 'Location captured';
+  let line = locationPrefix;
+  let y = stampY + titleSize + (textSize * 3) + 52;
+  const words = locationText.split(' ');
+
+  ctx.font = '500 ' + Math.max(16, Math.round(canvas.width * 0.020)) + 'px Arial';
+  for (const word of words) {
+    const test = line + word + ' ';
+    if (ctx.measureText(test).width > maxWidth && line !== locationPrefix) {
+      ctx.fillText(line.trim(), pad, y);
+      y += Math.max(22, Math.round(canvas.width * 0.026));
+      line = '    ' + word + ' ';
+    } else {
+      line = test;
+    }
+  }
+  ctx.fillText(line.trim(), pad, y);
+
+  ctx.restore();
+
   const image=canvas.toDataURL('image/jpeg',0.88);
 
   if(window.opener && !window.opener.closed){
