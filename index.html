@@ -846,239 +846,179 @@ function capture(){
   ctx.restore();
 
 
-  /* -----------------------------------------------
-     VERIFICATION STAMP
-  ----------------------------------------------- */
+ /* -----------------------------------------------
+   COMPACT VERIFICATION STAMP
+------------------------------------------------ */
 
-  const stampHeight =
-    Math.max(
-      170,
-      Math.round(
-        canvas.height * 0.22
-      )
-    );
+const pad = Math.max(
+  18,
+  Math.round(canvas.width * 0.025)
+);
+
+/* Compact stamp height */
+const stampHeight = Math.max(
+  210,
+  Math.round(canvas.height * 0.23)
+);
+
+const stampY = canvas.height - stampHeight;
+
+ctx.save();
+
+ctx.fillStyle = "rgba(0,0,0,0.78)";
+
+ctx.fillRect(
+  0,
+  stampY,
+  canvas.width,
+  stampHeight
+);
+
+/* -----------------------------
+   FONT SIZES
+----------------------------- */
+
+const titleSize = Math.max(
+  24,
+  Math.round(canvas.width * 0.033)
+);
+
+const textSize = Math.max(
+  17,
+  Math.round(canvas.width * 0.022)
+);
+
+const locationSize = Math.max(
+  15,
+  Math.round(canvas.width * 0.019)
+);
 
 
-  const stampY =
-    canvas.height -
-    stampHeight;
+/* -----------------------------
+   TITLE
+----------------------------- */
+
+ctx.fillStyle = "#ffffff";
+
+ctx.font =
+  "700 " +
+  titleSize +
+  "px Arial";
+
+let y = stampY + 35;
+
+ctx.fillText(
+  "AURUM • LIVE GPS VERIFIED",
+  pad,
+  y
+);
 
 
-  ctx.save();
+/* -----------------------------
+   TM NAME
+----------------------------- */
+
+y += 30;
+
+ctx.font =
+  "600 " +
+  textSize +
+  "px Arial";
+
+ctx.fillText(
+  "TM: " + tm,
+  pad,
+  y
+);
 
 
-  ctx.fillStyle =
-    "rgba(0,0,0,0.76)";
+/* -----------------------------
+   DATE & TIME
+----------------------------- */
 
-
-  ctx.fillRect(
-    0,
-    stampY,
-    canvas.width,
-    stampHeight
+const dt =
+  new Date().toLocaleString(
+    "en-IN",
+    {
+      day:"2-digit",
+      month:"short",
+      year:"numeric",
+      hour:"2-digit",
+      minute:"2-digit",
+      second:"2-digit"
+    }
   );
 
+y += 27;
 
-  const pad =
-    Math.max(
-      18,
-      Math.round(
-        canvas.width * 0.025
-      )
-    );
-
-
-  const titleSize =
-    Math.max(
-      24,
-      Math.round(
-        canvas.width * 0.035
-      )
-    );
+ctx.fillText(
+  dt,
+  pad,
+  y
+);
 
 
-  const textSize =
-    Math.max(
-      18,
-      Math.round(
-        canvas.width * 0.023
-      )
-    );
+/* -----------------------------
+   LOCATION
+----------------------------- */
 
+y += 29;
 
-  ctx.fillStyle =
-    "#ffffff";
+ctx.font =
+  "600 " +
+  locationSize +
+  "px Arial";
 
+const maxWidth =
+  canvas.width - (pad * 2);
 
-  ctx.font =
-    "700 " +
-    titleSize +
-    "px Arial";
+const locationText =
+  exact ||
+  area ||
+  "Location captured";
 
+const words =
+  locationText.split(/\s+/);
 
-  ctx.fillText(
-    "LIVE GPS VERIFIED",
-    pad,
-    stampY +
-    titleSize +
-    10
-  );
+let line = "LOCATION: ";
 
+const lineHeight = 21;
 
-  ctx.font =
-    "500 " +
-    textSize +
-    "px Arial";
+for(const word of words){
 
+  const test =
+    line + word + " ";
 
-  ctx.fillText(
-    "TM: " + tm,
-    pad,
-    stampY +
-    titleSize +
-    textSize +
-    25
-  );
-
-
-  ctx.fillText(
-    "HQ: " + hq,
-    pad,
-    stampY +
-    titleSize +
-    (textSize * 2) +
-    40
-  );
-
-
-  ctx.font =
-    "500 " +
-    Math.max(
-      16,
-      Math.round(
-        canvas.width * 0.020
-      )
-    ) +
-    "px Arial";
-
-
-  const maxWidth =
-    canvas.width -
-    (pad * 2);
-
-
-  let line =
-    "LOCATION: ";
-
-
-  let y =
-    stampY +
-    titleSize +
-    (textSize * 3) +
-    55;
-
-
-  const words =
-    (
-      exact ||
-      area ||
-      "Location captured"
-    ).split(" ");
-
-
-  for(
-    const word of words
+  if(
+    ctx.measureText(test).width > maxWidth &&
+    line !== "LOCATION: "
   ){
 
-    const test =
-      line +
-      word +
-      " ";
+    ctx.fillText(
+      line.trim(),
+      pad,
+      y
+    );
 
+    y += lineHeight;
 
-    if(
-      ctx.measureText(
-        test
-      ).width >
-      maxWidth &&
-      line !== "LOCATION: "
-    ){
+    line = word + " ";
 
-      ctx.fillText(
-        line.trim(),
-        pad,
-        y
-      );
+  }else{
 
-
-      y +=
-        Math.max(
-          22,
-          Math.round(
-            canvas.width * 0.026
-          )
-        );
-
-
-      line =
-        "    " +
-        word +
-        " ";
-
-    }else{
-
-      line =
-        test;
-
-    }
+    line = test;
 
   }
 
+}
 
-  ctx.fillText(
-    line.trim(),
-    pad,
-    y
-  );
+ctx.fillText(
+  line.trim(),
+  pad,
+  y
+);
 
-
-  ctx.font =
-    "500 " +
-    Math.max(
-      15,
-      Math.round(
-        canvas.width * 0.018
-      )
-    ) +
-    "px Arial";
-
-
-  const dt =
-    new Date().toLocaleString(
-      "en-IN",
-      {
-        day:"2-digit",
-        month:"short",
-        year:"numeric",
-        hour:"2-digit",
-        minute:"2-digit",
-        second:"2-digit"
-      }
-    );
-
-
-  ctx.fillText(
-    dt,
-    pad,
-    stampY +
-    stampHeight -
-    12
-  );
-
-
-  ctx.restore();
-
-
+ctx.restore();
   /* -----------------------------------------------
      CONVERT IMAGE
   ----------------------------------------------- */
