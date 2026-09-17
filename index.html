@@ -296,6 +296,13 @@ const hq =
 const tmCode =
   params.get("tmCode") || "";
 
+/* Location details supplied by Aurum Sync after server-side GPS verification. */
+const passedArea =
+  params.get("area") || "";
+
+const passedExact =
+  params.get("exact") || "";
+
 const returnUrl =
   params.get("returnUrl") || "";
 
@@ -320,7 +327,7 @@ document.getElementById("hq")
   .textContent = hq;
 
 document.getElementById("area")
-  .textContent = "Requesting live location...";
+  .textContent = passedExact || passedArea || "Requesting live location...";
 
 
 /* =====================================================
@@ -366,6 +373,31 @@ function updateCaptureAvailability(){
 ===================================================== */
 
 function getExactLocation(){
+
+  /* Aurum Sync already reverse-geocoded this exact GPS point.
+     Use that value directly so the camera never falls back to
+     the generic "Location captured" text. */
+  if(passedExact && passedExact !== "Location captured"){
+
+    exactLocation = passedExact;
+    exactLocationReady = true;
+
+    document.getElementById("area")
+      .textContent = passedArea || exactLocation;
+
+    document.getElementById("status")
+      .textContent =
+        "✓ Camera + Location ready — capture when ready";
+
+    document.getElementById("status")
+      .style.color = "#08714f";
+
+    document.getElementById("msg")
+      .textContent = "";
+
+    updateCaptureAvailability();
+    return;
+  }
 
   if(
     latitude === null ||
@@ -1199,3 +1231,4 @@ window.addEventListener(
 
 </body>
 </html>
+
