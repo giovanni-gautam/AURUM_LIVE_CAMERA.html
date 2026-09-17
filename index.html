@@ -379,17 +379,89 @@ function updateCaptureAvailability(){
 ===================================================== */
 
 function getExactLocation(){
+  /* First use address values already supplied by Aurum Sync.
+     If they are missing, ask Apps Script to reverse-geocode the
+     exact live GPS coordinates using JSONP (no CORS/fetch issue). */
+  const suppliedExact = params.get("exact") || "";
+  const suppliedArea = params.get("area") || "";
 
-  /* Aurum Sync has already resolved the live GPS coordinates server-side.
-     Do not replace the supplied address with a generic fallback. */
-  exactLocation = params.get("exact") || exactLocation || "Location not available";
-  areaLocation = params.get("area") || areaLocation || "Location not available";
+  if (suppliedExact && suppliedExact !== "Location not available" && suppliedExact !== "Location captured") {
+    exactLocation = suppliedExact;
+    areaLocation = suppliedArea || suppliedExact;
+    exactLocationReady = true;
+    document.getElementById("area").textContent = areaLocation;
+    document.getElementById("exact").textContent = exactLocation;
+    updateCaptureAvailability();
+    return;
+  }
 
-  document.getElementById("area").textContent = areaLocation;
-  document.getElementById("exact").textContent = exactLocation;
+  if(latitude === null || longitude === null){
+    exactLocationReady = false;
+    document.getElementById("area").textContent = "Location not available";
+    document.getElementById("exact").textContent = "Location not available";
+    updateCaptureAvailability();
+    return;
+  }
 
-  exactLocationReady = !!exactLocation && exactLocation !== "Location not available";
-  updateCaptureAvailability();
+  exactLocationReady = false;
+  document.getElementById("area").textContent = "Finding area...";
+  document.getElementById("exact").textContent = "Finding exact location...";
+  document.getElementById("status").textContent = "✓ GPS received • Finding exact location...";
+
+  const callbackName = "__aurumGPS_" + Date.now();
+  let script = null;
+  let finished = false;
+
+  function finish(data){
+    if(finished) return;
+    finished = true;
+    data = data || {};
+
+    exactLocation = data.exactLocation || "";
+    areaLocation = data.areaLocation || "";
+
+    if(exactLocation && exactLocation !== "Location captured" && exactLocation !== "Location not available"){
+      exactLocationReady = true;
+      document.getElementById("area").textContent = areaLocation || exactLocation;
+      document.getElementById("exact").textContent = exactLocation;
+      document.getElementById("status").textContent = "✓ Camera + Location ready — capture when ready";
+      document.getElementById("status").style.color = "#08714f";
+      document.getElementById("msg").textContent = "";
+    }else{
+      exactLocationReady = false;
+      document.getElementById("area").textContent = areaLocation || "Location not available";
+      document.getElementById("exact").textContent = "Location not available";
+      document.getElementById("status").textContent = "✓ Camera ready • Exact location unavailable";
+      document.getElementById("status").style.color = "#b3261e";
+      document.getElementById("msg").textContent = "GPS address could not be resolved. Please refresh and allow Location.";
+      document.getElementById("msg").style.color = "#b3261e";
+    }
+
+    updateCaptureAvailability();
+    try{ delete window[callbackName]; }catch(e){}
+    if(script && script.parentNode) script.parentNode.removeChild(script);
+  }
+
+  window[callbackName] = finish;
+
+  const apiUrl = new URL(returnUrl);
+  apiUrl.search = "";
+  apiUrl.hash = "";
+  apiUrl.searchParams.set("api", "getGPSLocationDetails");
+  apiUrl.searchParams.set("arg0", JSON.stringify(latitude));
+  apiUrl.searchParams.set("arg1", JSON.stringify(longitude));
+  apiUrl.searchParams.set("callback", callbackName);
+
+  script = document.createElement("script");
+  script.src = apiUrl.toString();
+  script.onerror = function(){
+    finish({});
+  };
+  document.head.appendChild(script);
+
+  setTimeout(function(){
+    if(!finished) finish({});
+  }, 20000);
 }
 
 
@@ -716,7 +788,7 @@ function capture(){
     Math.max(
       185,
       Math.round(
-        canvas.height * 0.22
+        canvas.height * 0.30
       )
     );
 
@@ -865,7 +937,7 @@ function capture(){
     30;
 
   let line =
-    "LOCATION: ";
+    "📍 EXACT LOCATION: ";
 
   let y =
     stampY +
@@ -897,7 +969,7 @@ function capture(){
     if(
       ctx.measureText(test).width >
       maxWidth &&
-      line !== "LOCATION: "
+      line !== "📍 EXACT LOCATION: "
     ){
 
       ctx.fillText(
@@ -1046,6 +1118,16 @@ function submitCapture(image){
   addField(
     "image",
     image
+  );
+
+  addField(
+    "area",
+    areaLocation || ""
+  );
+
+  addField(
+    "exactLocation",
+    exactLocation || ""
   );
 
   /*
