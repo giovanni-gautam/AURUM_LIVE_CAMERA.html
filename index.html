@@ -379,11 +379,21 @@ function updateCaptureAvailability(){
 ===================================================== */
 
 function getExactLocation(){
-  /*
-     ALWAYS resolve the address from the LIVE GPS coordinates.
-     The INDEX page may send a fallback such as "Location captured";
-     that value must NEVER be used in the final selfie stamp.
-  */
+  const suppliedExact = (params.get("exact") || "").trim();
+  const suppliedArea = (params.get("area") || "").trim();
+
+  if (suppliedExact && suppliedExact !== "Location not available" && suppliedExact !== "Location captured") {
+    exactLocation = suppliedExact;
+    areaLocation = suppliedArea || "";
+    exactLocationReady = true;
+    document.getElementById("area").textContent = areaLocation || "Area not available";
+    document.getElementById("exact").textContent = exactLocation;
+    document.getElementById("status").textContent = "✓ Camera + Location ready — capture when ready";
+    document.getElementById("status").style.color = "#08714f";
+    document.getElementById("msg").textContent = "";
+    updateCaptureAvailability();
+    return;
+  }
 
   if(latitude === null || longitude === null){
     exactLocationReady = false;
@@ -393,123 +403,73 @@ function getExactLocation(){
     return;
   }
 
-  const suppliedExact = String(params.get("exact") || "").trim();
-  const suppliedArea = String(params.get("area") || "").trim();
+  exactLocationReady = false;
+  document.getElementById("area").textContent = "Finding area...";
+  document.getElementById("exact").textContent = "Finding exact location...";
+  document.getElementById("status").textContent = "✓ GPS received • Finding exact location...";
+  document.getElementById("status").style.color = "#08714f";
 
-  const badValues = [
-    "Location captured",
-    "Location not available",
-    "Finding exact location...",
-    "Finding area..."
-  ];
-
-  /* If INDEX has a genuine address, use it immediately. */
-  if(
-    suppliedExact &&
-    badValues.indexOf(suppliedExact) === -1
-  ){
-    exactLocation = suppliedExact;
-    areaLocation = suppliedArea || "";
-    exactLocationReady = true;
-
-    document.getElementById("area").textContent =
-      areaLocation || "Location not available";
-    document.getElementById("exact").textContent =
-      exactLocation;
-
-    document.getElementById("status").textContent =
-      "✓ Camera + Location ready — capture when ready";
-    document.getElementById("status").style.color = "#08714f";
-    document.getElementById("msg").textContent = "";
+  if(!returnUrl){
+    document.getElementById("status").textContent = "GPS received • Address service unavailable";
+    document.getElementById("status").style.color = "#b3261e";
     updateCaptureAvailability();
     return;
   }
 
-  /* Otherwise ALWAYS reverse-geocode the live coordinates in Code.gs. */
-  exactLocationReady = false;
-  document.getElementById("area").textContent = "Finding area...";
-  document.getElementById("exact").textContent = "Finding exact location...";
-  document.getElementById("status").textContent =
-    "✓ GPS received • Finding exact location...";
-  document.getElementById("status").style.color = "#08714f";
-
-  const callbackName = "__aurumGPS_" + Date.now();
+  const callbackName = "__aurumGPS_" + Date.now() + "_" + Math.random().toString(36).slice(2);
   let script = null;
   let finished = false;
 
   function finish(data){
     if(finished) return;
     finished = true;
-
     data = data || {};
-
     const resolvedExact = String(data.exactLocation || "").trim();
     const resolvedArea = String(data.areaLocation || "").trim();
 
-    if(
-      resolvedExact &&
-      badValues.indexOf(resolvedExact) === -1
-    ){
+    if(resolvedExact && resolvedExact !== "Location captured" && resolvedExact !== "Location not available" && resolvedExact !== "Invalid GPS location"){
       exactLocation = resolvedExact;
-      areaLocation = resolvedArea || "";
+      areaLocation = resolvedArea;
       exactLocationReady = true;
-
-      document.getElementById("area").textContent =
-        areaLocation || "Location not available";
-      document.getElementById("exact").textContent =
-        exactLocation;
-
-      document.getElementById("status").textContent =
-        "✓ Camera + Location ready — capture when ready";
+      document.getElementById("area").textContent = areaLocation || "Area not available";
+      document.getElementById("exact").textContent = exactLocation;
+      document.getElementById("status").textContent = "✓ Camera + Location ready — capture when ready";
       document.getElementById("status").style.color = "#08714f";
       document.getElementById("msg").textContent = "";
-      document.getElementById("msg").style.color = "#08714f";
-    }else{
-      exactLocation = "";
-      areaLocation = resolvedArea || "";
+    } else {
       exactLocationReady = false;
-
-      document.getElementById("area").textContent =
-        areaLocation || "Location not available";
-      document.getElementById("exact").textContent =
-        "Location not available";
-
-      document.getElementById("status").textContent =
-        "✓ Camera ready • Exact location unavailable";
+      document.getElementById("area").textContent = "Location not available";
+      document.getElementById("exact").textContent = "Location not available";
+      document.getElementById("status").textContent = "✓ Camera ready • Exact location unavailable";
       document.getElementById("status").style.color = "#b3261e";
-      document.getElementById("msg").textContent =
-        "GPS address could not be resolved. Please refresh and allow Location.";
+      document.getElementById("msg").textContent = "GPS address could not be resolved. Please refresh and allow Location.";
       document.getElementById("msg").style.color = "#b3261e";
     }
-
     updateCaptureAvailability();
-
     try{ delete window[callbackName]; }catch(e){}
-    if(script && script.parentNode){
-      script.parentNode.removeChild(script);
-    }
+    if(script && script.parentNode) script.parentNode.removeChild(script);
   }
 
   window[callbackName] = finish;
 
-  const apiUrl = new URL(returnUrl);
-  apiUrl.search = "";
-  apiUrl.hash = "";
-  apiUrl.searchParams.set("api", "getGPSLocationDetails");
-  apiUrl.searchParams.set("arg0", String(latitude));
-  apiUrl.searchParams.set("arg1", String(longitude));
-  apiUrl.searchParams.set("callback", callbackName);
-  apiUrl.searchParams.set("_", String(Date.now()));
-
-  script = document.createElement("script");
-  script.src = apiUrl.toString();
-  script.async = true;
-  script.onerror = function(){ finish({}); };
-  document.head.appendChild(script);
-
-  setTimeout(function(){
-    if(!finished) finish({});
-  }, 20000);
+  try{
+    const apiUrl = new URL(returnUrl);
+    apiUrl.search = "";
+    apiUrl.hash = "";
+    apiUrl.searchParams.set("action", "location");
+    apiUrl.searchParams.set("lat", String(latitude));
+    apiUrl.searchParams.set("lon", String(longitude));
+    apiUrl.searchParams.set("callback", callbackName);
+    script = document.createElement("script");
+    script.src = apiUrl.toString();
+    script.onerror = function(){ finish({}); };
+    document.head.appendChild(script);
+  }catch(error){
+    console.error(error);
+    finish({});
+    return;
+  }
+  setTimeout(function(){ if(!finished) finish({}); }, 20000);
 }
 
 /* =====================================================
@@ -517,113 +477,46 @@ function getExactLocation(){
 ===================================================== */
 
 function startLiveLocation(){
-
-  /* If Aurum Sync supplied live GPS + resolved addresses, use them directly. */
-  if(latitude !== null && longitude !== null && exactLocation && areaLocation){
+  /* INDEX passes the live GPS coordinates in the camera URL. Use them directly. */
+  if(latitude !== null && longitude !== null){
     locationReady = true;
-    exactLocationReady = true;
-    document.getElementById("area").textContent = areaLocation;
-    document.getElementById("exact").textContent = exactLocation;
-    document.getElementById("status").textContent = "✓ Location verified • Requesting Camera permission...";
+    document.getElementById("status").textContent = "✓ Live GPS received • Verifying exact location...";
     document.getElementById("status").style.color = "#08714f";
+    document.getElementById("msg").textContent = "Finding your exact address...";
+    getExactLocation();
     startCamera();
     return;
   }
 
-  const status =
-    document.getElementById("status");
-
-  const msg =
-    document.getElementById("msg");
-
+  const status = document.getElementById("status");
+  const msg = document.getElementById("msg");
   if(!navigator.geolocation){
-
-    status.textContent =
-      "Location permission required";
-
-    status.style.color =
-      "#b3261e";
-
-    msg.textContent =
-      "Location is not supported on this device.";
-
+    status.textContent = "Location permission required";
+    status.style.color = "#b3261e";
+    msg.textContent = "Location is not supported on this device.";
     updateCaptureAvailability();
-
     return;
   }
-
-  status.textContent =
-    "Requesting Location permission...";
-
-  status.style.color =
-    "#08714f";
-
-  msg.textContent =
-    "Please tap Allow for Location.";
-
-  navigator.geolocation.getCurrentPosition(
-
-    function(position){
-
-      latitude =
-        Number(position.coords.latitude);
-
-      longitude =
-        Number(position.coords.longitude);
-
-      locationReady = true;
-
-      status.textContent =
-        "✓ Location permission granted";
-
-      status.style.color =
-        "#08714f";
-
-      msg.textContent =
-        "Requesting Camera permission...";
-
-      getExactLocation();
-
-      /*
-        Camera permission is requested only after
-        the live location has been obtained.
-      */
-      startCamera();
-
-    },
-
-    function(error){
-
-      locationReady = false;
-
-      status.textContent =
-        "Location permission required";
-
-      status.style.color =
-        "#b3261e";
-
-      if(
-        error &&
-        error.code === 1
-      ){
-        msg.textContent =
-          "Location access was denied. Chrome Site Settings → Location → Allow, then refresh.";
-      }else{
-        msg.textContent =
-          "Unable to get live location. Please allow Location access and try again.";
-      }
-
-      updateCaptureAvailability();
-    },
-
-    {
-      enableHighAccuracy:true,
-      timeout:15000,
-      maximumAge:0
-    }
-  );
+  status.textContent = "Requesting Location permission...";
+  status.style.color = "#08714f";
+  msg.textContent = "Please tap Allow for Location.";
+  navigator.geolocation.getCurrentPosition(function(position){
+    latitude = Number(position.coords.latitude);
+    longitude = Number(position.coords.longitude);
+    locationReady = true;
+    status.textContent = "✓ Live GPS received • Verifying exact location...";
+    status.style.color = "#08714f";
+    msg.textContent = "Finding your exact address...";
+    getExactLocation();
+    startCamera();
+  },function(error){
+    locationReady = false;
+    status.textContent = "Location permission required";
+    status.style.color = "#b3261e";
+    msg.textContent = error && error.code === 1 ? "Location access was denied. Chrome Site Settings → Location → Allow, then refresh." : "Unable to get live location. Please allow Location access and try again.";
+    updateCaptureAvailability();
+  },{enableHighAccuracy:true,timeout:15000,maximumAge:0});
 }
-
 
 /* =====================================================
    REQUEST CAMERA
@@ -774,10 +667,7 @@ function capture(){
     busy ||
     !stream ||
     !locationReady ||
-    !exactLocationReady ||
-    !exactLocation ||
-    exactLocation === "Location captured" ||
-    exactLocation === "Location not available"
+    !exactLocationReady
   ){
     return;
   }
@@ -1003,13 +893,9 @@ function capture(){
       )
     );
 
-  const stampExactLocation =
-    String(exactLocation || "").trim();
-
-  /* Never stamp the generic "Location captured" text. */
   const words =
     (
-      stampExactLocation ||
+      exactLocation ||
       "Location not available"
     ).split(" ");
 
@@ -1267,4 +1153,3 @@ window.addEventListener(
 
 </body>
 </html>
-
