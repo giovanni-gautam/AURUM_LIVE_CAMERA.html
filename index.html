@@ -313,11 +313,11 @@ const exact =
   "-";
 
 
-const latitude =
+let latitude =
   params.get("lat") || "";
 
 
-const longitude =
+let longitude =
   params.get("lon") || "";
 
 
@@ -352,6 +352,7 @@ document.getElementById("area")
 let stream = null;
 
 let busy = false;
+let locationReady = false;
 
 
 /* =====================================================
