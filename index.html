@@ -213,9 +213,14 @@ canvas{
         <strong id="hq">-</strong>
       </div>
 
-      <div style="grid-column:1/-1">
-        <small>EXACT LOCATION</small>
+      <div>
+        <small>AREA / LOCATION</small>
         <strong id="area">-</strong>
+      </div>
+
+      <div>
+        <small>EXACT LOCATION</small>
+        <strong id="exact">-</strong>
       </div>
 
     </div>
@@ -299,9 +304,14 @@ const tmCode =
 const returnUrl =
   params.get("returnUrl") || "";
 
-let latitude = null;
-let longitude = null;
-let exactLocation = "";
+/* Location values are supplied by Aurum Sync after server-side reverse geocoding. */
+let areaLocation = params.get("area") || "";
+let exactLocation = params.get("exact") || "";
+
+let latitude = Number(params.get("lat"));
+let longitude = Number(params.get("lon"));
+if(!Number.isFinite(latitude)) latitude = null;
+if(!Number.isFinite(longitude)) longitude = null;
 
 let stream = null;
 let busy = false;
@@ -320,7 +330,10 @@ document.getElementById("hq")
   .textContent = hq;
 
 document.getElementById("area")
-  .textContent = "Requesting live location...";
+  .textContent = areaLocation || "Location not available";
+
+document.getElementById("exact")
+  .textContent = exactLocation || "Location not available";
 
 
 /* =====================================================
@@ -366,130 +379,156 @@ function updateCaptureAvailability(){
 ===================================================== */
 
 function getExactLocation(){
+  /*
+     ALWAYS resolve the address from the LIVE GPS coordinates.
+     The INDEX page may send a fallback such as "Location captured";
+     that value must NEVER be used in the final selfie stamp.
+  */
 
-  if(
-    latitude === null ||
-    longitude === null
-  ){
+  if(latitude === null || longitude === null){
+    exactLocationReady = false;
+    document.getElementById("area").textContent = "Location not available";
+    document.getElementById("exact").textContent = "Location not available";
+    updateCaptureAvailability();
     return;
   }
 
+  const suppliedExact = String(params.get("exact") || "").trim();
+  const suppliedArea = String(params.get("area") || "").trim();
+
+  const badValues = [
+    "Location captured",
+    "Location not available",
+    "Finding exact location...",
+    "Finding area..."
+  ];
+
+  /* If INDEX has a genuine address, use it immediately. */
+  if(
+    suppliedExact &&
+    badValues.indexOf(suppliedExact) === -1
+  ){
+    exactLocation = suppliedExact;
+    areaLocation = suppliedArea || "";
+    exactLocationReady = true;
+
+    document.getElementById("area").textContent =
+      areaLocation || "Location not available";
+    document.getElementById("exact").textContent =
+      exactLocation;
+
+    document.getElementById("status").textContent =
+      "✓ Camera + Location ready — capture when ready";
+    document.getElementById("status").style.color = "#08714f";
+    document.getElementById("msg").textContent = "";
+    updateCaptureAvailability();
+    return;
+  }
+
+  /* Otherwise ALWAYS reverse-geocode the live coordinates in Code.gs. */
   exactLocationReady = false;
+  document.getElementById("area").textContent = "Finding area...";
+  document.getElementById("exact").textContent = "Finding exact location...";
+  document.getElementById("status").textContent =
+    "✓ GPS received • Finding exact location...";
+  document.getElementById("status").style.color = "#08714f";
 
-  document.getElementById("area")
-    .textContent =
-      "Finding exact location...";
+  const callbackName = "__aurumGPS_" + Date.now();
+  let script = null;
+  let finished = false;
 
-  const callbackName =
-    "__aurumLocation_" +
-    Date.now();
+  function finish(data){
+    if(finished) return;
+    finished = true;
 
-  window[callbackName] =
-    function(data){
+    data = data || {};
 
-      try{
+    const resolvedExact = String(data.exactLocation || "").trim();
+    const resolvedArea = String(data.areaLocation || "").trim();
 
-        data = data || {};
-
-        exactLocation =
-          data.exactLocation ||
-          "Location captured";
-
-        document.getElementById("area")
-          .textContent =
-            exactLocation;
-
-        exactLocationReady = true;
-
-        document.getElementById("status")
-          .textContent =
-            "✓ Camera + Location ready — capture when ready";
-
-        document.getElementById("status")
-          .style.color =
-            "#08714f";
-
-        document.getElementById("msg")
-          .textContent = "";
-
-        updateCaptureAvailability();
-
-      }finally{
-
-        try{
-          delete window[callbackName];
-        }catch(e){}
-
-        if(script && script.parentNode){
-          script.parentNode.removeChild(script);
-        }
-      }
-    };
-
-  const script =
-    document.createElement("script");
-
-  /*
-    returnUrl is the Apps Script web-app URL.
-    Its origin is trusted because it was supplied by Aurum Sync.
-  */
-  const endpoint =
-    returnUrl +
-    (
-      returnUrl.indexOf("?") >= 0
-        ? "&"
-        : "?"
-    ) +
-    "action=location" +
-    "&lat=" +
-    encodeURIComponent(latitude) +
-    "&lon=" +
-    encodeURIComponent(longitude) +
-    "&callback=" +
-    encodeURIComponent(callbackName);
-
-  script.src = endpoint;
-
-  script.onerror =
-    function(){
-
-      exactLocation =
-        "Location captured";
-
-      document.getElementById("area")
-        .textContent =
-          exactLocation;
-
+    if(
+      resolvedExact &&
+      badValues.indexOf(resolvedExact) === -1
+    ){
+      exactLocation = resolvedExact;
+      areaLocation = resolvedArea || "";
       exactLocationReady = true;
 
-      document.getElementById("status")
-        .textContent =
-          "✓ Camera + GPS ready — capture when ready";
+      document.getElementById("area").textContent =
+        areaLocation || "Location not available";
+      document.getElementById("exact").textContent =
+        exactLocation;
 
-      document.getElementById("status")
-        .style.color =
-          "#08714f";
+      document.getElementById("status").textContent =
+        "✓ Camera + Location ready — capture when ready";
+      document.getElementById("status").style.color = "#08714f";
+      document.getElementById("msg").textContent = "";
+      document.getElementById("msg").style.color = "#08714f";
+    }else{
+      exactLocation = "";
+      areaLocation = resolvedArea || "";
+      exactLocationReady = false;
 
-      updateCaptureAvailability();
+      document.getElementById("area").textContent =
+        areaLocation || "Location not available";
+      document.getElementById("exact").textContent =
+        "Location not available";
 
-      try{
-        delete window[callbackName];
-      }catch(e){}
+      document.getElementById("status").textContent =
+        "✓ Camera ready • Exact location unavailable";
+      document.getElementById("status").style.color = "#b3261e";
+      document.getElementById("msg").textContent =
+        "GPS address could not be resolved. Please refresh and allow Location.";
+      document.getElementById("msg").style.color = "#b3261e";
+    }
 
-      if(script.parentNode){
-        script.parentNode.removeChild(script);
-      }
-    };
+    updateCaptureAvailability();
 
+    try{ delete window[callbackName]; }catch(e){}
+    if(script && script.parentNode){
+      script.parentNode.removeChild(script);
+    }
+  }
+
+  window[callbackName] = finish;
+
+  const apiUrl = new URL(returnUrl);
+  apiUrl.search = "";
+  apiUrl.hash = "";
+  apiUrl.searchParams.set("api", "getGPSLocationDetails");
+  apiUrl.searchParams.set("arg0", String(latitude));
+  apiUrl.searchParams.set("arg1", String(longitude));
+  apiUrl.searchParams.set("callback", callbackName);
+  apiUrl.searchParams.set("_", String(Date.now()));
+
+  script = document.createElement("script");
+  script.src = apiUrl.toString();
+  script.async = true;
+  script.onerror = function(){ finish({}); };
   document.head.appendChild(script);
-}
 
+  setTimeout(function(){
+    if(!finished) finish({});
+  }, 20000);
+}
 
 /* =====================================================
    REQUEST LIVE LOCATION
 ===================================================== */
 
 function startLiveLocation(){
+
+  /* If Aurum Sync supplied live GPS + resolved addresses, use them directly. */
+  if(latitude !== null && longitude !== null && exactLocation && areaLocation){
+    locationReady = true;
+    exactLocationReady = true;
+    document.getElementById("area").textContent = areaLocation;
+    document.getElementById("exact").textContent = exactLocation;
+    document.getElementById("status").textContent = "✓ Location verified • Requesting Camera permission...";
+    document.getElementById("status").style.color = "#08714f";
+    startCamera();
+    return;
+  }
 
   const status =
     document.getElementById("status");
@@ -735,7 +774,10 @@ function capture(){
     busy ||
     !stream ||
     !locationReady ||
-    !exactLocationReady
+    !exactLocationReady ||
+    !exactLocation ||
+    exactLocation === "Location captured" ||
+    exactLocation === "Location not available"
   ){
     return;
   }
@@ -796,7 +838,7 @@ function capture(){
     Math.max(
       185,
       Math.round(
-        canvas.height * 0.22
+        canvas.height * 0.30
       )
     );
 
@@ -945,7 +987,7 @@ function capture(){
     30;
 
   let line =
-    "LOCATION: ";
+    "📍 EXACT LOCATION: ";
 
   let y =
     stampY +
@@ -961,10 +1003,14 @@ function capture(){
       )
     );
 
+  const stampExactLocation =
+    String(exactLocation || "").trim();
+
+  /* Never stamp the generic "Location captured" text. */
   const words =
     (
-      exactLocation ||
-      "Location captured"
+      stampExactLocation ||
+      "Location not available"
     ).split(" ");
 
   words.forEach(function(word){
@@ -977,7 +1023,7 @@ function capture(){
     if(
       ctx.measureText(test).width >
       maxWidth &&
-      line !== "LOCATION: "
+      line !== "📍 EXACT LOCATION: "
     ){
 
       ctx.fillText(
@@ -1053,6 +1099,7 @@ function submitCapture(image){
       "Please reopen LIVE GPS SELFIE from Aurum Sync.";
 
     busy = false;
+
     return;
   }
 
@@ -1063,71 +1110,92 @@ function submitCapture(image){
     "#08714f";
 
   msg.textContent =
-    "Sending verified selfie to Aurum Sync...";
+    "Submitting selfie to Aurum Sync...";
 
   msg.style.color =
     "#08714f";
 
-  /*
-    The camera page is a top-level popup.
-    Send the captured image directly to the original
-    Aurum Sync page using postMessage. This avoids CORS,
-    form POST, and same-tab navigation problems.
-  */
+  stopCamera();
 
-  if(
-    !window.opener ||
-    window.opener.closed
+  const form =
+    document.createElement("form");
+
+  form.method =
+    "POST";
+
+  form.action =
+    returnUrl;
+
+  form.target =
+    "_self";
+
+  form.style.display =
+    "none";
+
+
+  function addField(
+    name,
+    value
   ){
 
-    status.textContent =
-      "Aurum Sync window not found";
+    const input =
+      document.createElement("input");
 
-    status.style.color =
-      "#b3261e";
+    input.type =
+      "hidden";
 
-    msg.textContent =
-      "Please reopen LIVE GPS SELFIE from the Aurum Sync portal.";
+    input.name =
+      name;
 
-    busy = false;
-    return;
+    input.value =
+      value;
+
+    form.appendChild(input);
   }
 
-  const targetOrigin =
-    new URL(returnUrl).origin;
 
-  window.opener.postMessage(
-    {
-      type: "AURUM_GPS_SELFIE_CAPTURE",
-      tmCode: tmCode,
-      latitude: latitude,
-      longitude: longitude,
-      exactLocation: exactLocation || "Location captured",
-      areaLocation: exactLocation || "Location captured",
-      image: image
-    },
-    targetOrigin
+  addField(
+    "tmCode",
+    tmCode
+  );
+
+  addField(
+    "latitude",
+    String(latitude)
+  );
+
+  addField(
+    "longitude",
+    String(longitude)
+  );
+
+  addField(
+    "image",
+    image
+  );
+
+  addField(
+    "area",
+    areaLocation || ""
+  );
+
+  addField(
+    "exactLocation",
+    exactLocation || ""
   );
 
   /*
-    Give the opener a moment to receive the image,
-    then close this camera window.
+    Apps Script doPost uses this URL to return to
+    the portal after the selfie is saved.
   */
-  setTimeout(function(){
+  addField(
+    "returnUrl",
+    returnUrl
+  );
 
-    stopCamera();
+  document.body.appendChild(form);
 
-    status.textContent =
-      "✓ Selfie sent successfully";
-
-    msg.textContent =
-      "Returning to Aurum Sync...";
-
-    try{
-      window.close();
-    }catch(e){}
-
-  }, 500);
+  form.submit();
 }
 
 
@@ -1199,3 +1267,4 @@ window.addEventListener(
 
 </body>
 </html>
+
