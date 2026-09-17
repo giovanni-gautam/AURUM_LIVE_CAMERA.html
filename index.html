@@ -200,6 +200,7 @@ canvas{
       Aurum • Live camera capture
     </p>
 
+
     <div class="info">
 
       <div>
@@ -219,6 +220,7 @@ canvas{
 
     </div>
 
+
     <div class="camera">
 
       <video
@@ -235,9 +237,11 @@ canvas{
 
     </div>
 
+
     <div id="status" class="status">
       Starting camera...
     </div>
+
 
     <div class="actions">
 
@@ -258,22 +262,26 @@ canvas{
 
     </div>
 
+
     <button
       class="close"
       onclick="goBack()">
       CLOSE CAMERA
     </button>
 
+
     <div
       id="msg"
       class="msg">
     </div>
+
 
     <canvas id="canvas"></canvas>
 
   </div>
 
 </div>
+
 
 <script>
 
@@ -286,28 +294,36 @@ const params =
     window.location.search
   );
 
+
 const tm =
   params.get("tm") || "-";
+
 
 const hq =
   params.get("hq") || "-";
 
+
 const area =
   params.get("area") || "-";
+
 
 const exact =
   params.get("exact") ||
   area ||
   "-";
 
+
 const latitude =
   params.get("lat") || "";
+
 
 const longitude =
   params.get("lon") || "";
 
+
 const tmCode =
   params.get("tmCode") || "";
+
 
 const returnUrl =
   params.get("returnUrl") || "";
@@ -320,11 +336,13 @@ const returnUrl =
 document.getElementById("tm")
   .textContent = tm;
 
+
 document.getElementById("hq")
   .textContent = hq;
 
+
 document.getElementById("area")
-  .textContent = exact;
+  .textContent = exact || "Requesting live location...";
 
 
 /* =====================================================
@@ -332,6 +350,7 @@ document.getElementById("area")
 ===================================================== */
 
 let stream = null;
+
 let busy = false;
 
 
@@ -358,8 +377,141 @@ function stopCamera(){
 
 
 /* =====================================================
+   REQUEST LIVE LOCATION
+===================================================== */
+
+function startLiveLocation(){
+
+  const status =
+    document.getElementById("status");
+
+  const msg =
+    document.getElementById("msg");
+
+  if(!navigator.geolocation){
+
+    status.textContent =
+      "Location permission required";
+
+    msg.textContent =
+      "Location is not supported on this device.";
+
+    msg.style.color="#b3261e";
+
+    return;
+  }
+
+  status.textContent =
+    "Requesting location permission...";
+
+  msg.textContent =
+    "Please allow Location access for this site.";
+
+  navigator.geolocation.getCurrentPosition(
+
+    function(position){
+
+      latitude = position.coords.latitude;
+      longitude = position.coords.longitude;
+      locationReady = true;
+
+      status.textContent =
+        "✓ Location ready • Starting camera...";
+
+      status.style.color="#08714f";
+
+      try{
+        if(window.opener){
+          window.opener.postMessage({
+            type:"AURUM_GPS_LOCATION_READY",
+            latitude:Number(latitude),
+            longitude:Number(longitude)
+          },"*");
+        }
+      }catch(e){}
+
+      updateCaptureAvailability();
+
+    },
+
+    function(error){
+
+      locationReady = false;
+
+      status.textContent =
+        "Location permission required";
+
+      msg.style.color="#b3261e";
+
+      if(error && error.code === 1){
+        msg.textContent =
+          "Location access was denied. Chrome Site Settings → Location → Allow, then refresh.";
+      }else{
+        msg.textContent =
+          "Unable to get live location. Please allow Location access and try again.";
+      }
+
+      updateCaptureAvailability();
+    },
+
+    {
+      enableHighAccuracy:true,
+      timeout:15000,
+      maximumAge:0
+    }
+  );
+}
+
+
+/* =====================================================
+   RECEIVE EXACT LOCATION FROM AURUM SYNC
+===================================================== */
+
+window.addEventListener("message", function(event){
+
+  const data = event.data || {};
+
+  if(data.type !== "AURUM_GPS_LOCATION_DETAILS"){
+    return;
+  }
+
+  exactLocation =
+    data.exactLocation ||
+    data.areaLocation ||
+    exact ||
+    area ||
+    "Location captured";
+
+  document.getElementById("area").textContent =
+    exactLocation;
+
+  document.getElementById("msg").textContent =
+    "✓ Camera + Location verified. You can capture now.";
+
+  document.getElementById("msg").style.color =
+    "#08714f";
+
+  updateCaptureAvailability();
+
+});
+
+
+function updateCaptureAvailability(){
+
+  const captureBtn =
+    document.getElementById("capture");
+
+  captureBtn.disabled =
+    !(stream && locationReady);
+
+}
+
+
+/* =====================================================
    START CAMERA
 ===================================================== */
+
+
 
 async function startCamera(){
 
@@ -375,21 +527,28 @@ async function startCamera(){
   const retakeBtn =
     document.getElementById("retake");
 
+
   msg.textContent = "";
+
   msg.style.color = "#b3261e";
 
   captureBtn.disabled = true;
+
   retakeBtn.style.display = "none";
 
+
   stopCamera();
+
 
   try{
 
     /* -----------------------------------------------
-       HTTPS CHECK
+       SECURE CONNECTION CHECK
     ----------------------------------------------- */
 
-    if(!window.isSecureContext){
+    if(
+      !window.isSecureContext
+    ){
 
       throw new Error(
         "This camera requires HTTPS."
@@ -417,62 +576,52 @@ async function startCamera(){
     status.textContent =
       "Requesting camera permission...";
 
-    status.style.color =
-      "#102b50";
-
 
     /* -----------------------------------------------
-       CHECK CAMERA PERMISSION
+       CAMERA PERMISSION STATE
     ----------------------------------------------- */
 
-    if(
-      navigator.permissions &&
-      navigator.permissions.query
-    ){
+    try{
 
-      try{
+      if(
+        navigator.permissions &&
+        navigator.permissions.query
+      ){
 
         const permission =
           await navigator.permissions.query({
             name:"camera"
           });
 
-        if(permission.state === "denied"){
 
-          status.textContent =
-            "Camera permission blocked";
-
-          msg.textContent =
-            "Chrome has blocked camera access. Click the camera icon near the address bar and select Allow.";
-
-          msg.style.color =
-            "#b3261e";
+        if(
+          permission.state === "denied"
+        ){
 
           throw new Error(
-            "Camera permission blocked."
+            "Camera permission is BLOCKED for this site. Open Chrome Site Settings → Camera → Allow."
           );
 
         }
 
-      }catch(permissionError){
+      }
 
-        /*
-         * Permissions API is not supported
-         * in every browser. The actual
-         * getUserMedia request below remains
-         * the final permission request.
-         */
+    }catch(permissionError){
 
-        if(
-          permissionError.message &&
-          permissionError.message.indexOf(
-            "blocked"
-          ) !== -1
-        ){
+      /*
+       * Ignore unsupported Permissions API.
+       * Actual getUserMedia call below remains
+       * the final authority.
+       */
 
-          throw permissionError;
+      if(
+        permissionError.message &&
+        permissionError.message.indexOf(
+          "BLOCKED"
+        ) !== -1
+      ){
 
-        }
+        throw permissionError;
 
       }
 
@@ -480,24 +629,17 @@ async function startCamera(){
 
 
     /* -----------------------------------------------
-       ACTUAL CAMERA PERMISSION REQUEST
+       REQUEST CAMERA
     ----------------------------------------------- */
-
-    status.textContent =
-      "Please allow camera access...";
 
     stream =
       await navigator.mediaDevices.getUserMedia({
 
         video:{
-          facingMode:{
-            ideal:"user"
-          },
-
+          facingMode:"user",
           width:{
             ideal:1280
           },
-
           height:{
             ideal:960
           }
@@ -509,14 +651,16 @@ async function startCamera(){
 
 
     /* -----------------------------------------------
-       CONNECT CAMERA
+       CONNECT STREAM TO VIDEO
     ----------------------------------------------- */
 
     const video =
       document.getElementById("video");
 
+
     video.srcObject =
       stream;
+
 
     await video.play();
 
@@ -528,11 +672,13 @@ async function startCamera(){
     status.textContent =
       "✓ Camera ready — capture when ready";
 
+
     status.style.color =
       "#08714f";
 
-    captureBtn.disabled =
-      false;
+
+    updateCaptureAvailability();
+
 
   }catch(e){
 
@@ -541,21 +687,29 @@ async function startCamera(){
       e
     );
 
-    captureBtn.disabled =
-      true;
+
+    status.textContent =
+      "Camera permission required";
+
 
     status.style.color =
       "#b3261e";
 
+
     let errorMessage =
       "";
+
+
+    /* -----------------------------------------------
+       EXACT ERROR
+    ----------------------------------------------- */
 
     if(
       e.name === "NotAllowedError"
     ){
 
       errorMessage =
-        "Camera access was denied. Click the camera icon near the address bar → Camera → Allow, then reload this page.";
+        "Camera access was denied. Chrome Site Settings → Camera → Allow for giovanni-gautam.github.io, then refresh.";
 
     }
 
@@ -594,11 +748,13 @@ async function startCamera(){
 
     }
 
-    status.textContent =
-      "Camera permission required";
 
     msg.textContent =
       errorMessage;
+
+
+    captureBtn.disabled =
+      true;
 
   }
 
@@ -613,24 +769,6 @@ function goBack(){
 
   stopCamera();
 
-  /*
-   * Return to Aurum Sync without
-   * trying to submit through fetch.
-   */
-
-  if(window.opener){
-
-    try{
-
-      window.opener.focus();
-
-    }catch(e){}
-
-    window.close();
-
-    return;
-
-  }
 
   if(returnUrl){
 
@@ -647,62 +785,92 @@ function goBack(){
 
 
 /* =====================================================
-   SEND CAPTURE DIRECTLY TO AURUM SYNC
+   SUBMIT CAPTURE
 ===================================================== */
 
-function sendCaptureToAurum(image){
+async function submitCapture(image){
 
-  if(!window.opener){
+  const status =
+    document.getElementById("status");
 
-    throw new Error(
-      "Aurum Sync window is not available. Please reopen LIVE GPS SELFIE from Aurum Sync."
-    );
+  const msg =
+    document.getElementById("msg");
 
+  if(
+    !returnUrl ||
+    !tmCode ||
+    !latitude ||
+    !longitude
+  ){
+
+    status.textContent =
+      "Selfie captured";
+
+    msg.textContent =
+      "Live GPS information is missing. Please reopen LIVE GPS SELFIE from Aurum Sync.";
+
+    msg.style.color =
+      "#b3261e";
+
+    busy = false;
+    return;
   }
 
-  /*
-   * Send image + verification data
-   * directly to the parent Aurum page.
-   *
-   * NO fetch()
-   * NO cross-origin POST
-   */
+  status.textContent =
+    "✓ Selfie captured";
 
-  window.opener.postMessage(
+  msg.textContent =
+    "Sending selfie to Aurum Sync...";
 
-    {
-      type:
-        "AURUM_GPS_SELFIE_CAPTURE",
+  msg.style.color =
+    "#08714f";
 
-      image:
-        image,
+  try{
 
-      tmCode:
-        tmCode,
+    if(!window.opener){
+      throw new Error(
+        "Aurum Sync window is not available."
+      );
+    }
 
-      latitude:
-        latitude,
+    window.opener.postMessage({
+      type:"AURUM_GPS_SELFIE_CAPTURE",
+      image:image,
+      tmCode:tmCode,
+      latitude:Number(latitude),
+      longitude:Number(longitude),
+      tm:tm,
+      hq:hq,
+      area:area,
+      exactLocation:exactLocation || exact || area
+    },"*");
 
-      longitude:
-        longitude,
+    stopCamera();
 
-      tm:
-        tm,
+    setTimeout(function(){
+      try{
+        window.close();
+      }catch(e){}
+    },700);
 
-      hq:
-        hq,
+  }catch(e){
 
-      area:
-        area,
+    console.error(
+      "Capture transfer error:",
+      e
+    );
 
-      exactLocation:
-        exact
+    status.textContent =
+      "Transfer failed";
 
-    },
+    msg.textContent =
+      "Please reopen LIVE GPS SELFIE and try again.";
 
-    "*"
+    msg.style.color =
+      "#b3261e";
 
-  );
+    busy = false;
+  }
 
 }
 
@@ -715,27 +883,39 @@ function capture(){
 
   if(
     busy ||
-    !stream
+    !stream ||
+    !locationReady
   ){
 
     return;
 
   }
 
+
   busy = true;
 
 
   const video =
-    document.getElementById("video");
+    document.getElementById(
+      "video"
+    );
+
 
   const canvas =
-    document.getElementById("canvas");
+    document.getElementById(
+      "canvas"
+    );
+
 
   const ctx =
-    canvas.getContext("2d");
+    canvas.getContext(
+      "2d"
+    );
 
 
-  if(!video.videoWidth){
+  if(
+    !video.videoWidth
+  ){
 
     busy = false;
 
@@ -744,12 +924,9 @@ function capture(){
   }
 
 
-  /* -----------------------------------------------
-     IMAGE SIZE
-  ----------------------------------------------- */
-
   canvas.width =
     video.videoWidth;
+
 
   canvas.height =
     video.videoHeight;
@@ -761,15 +938,18 @@ function capture(){
 
   ctx.save();
 
+
   ctx.translate(
     canvas.width,
     0
   );
 
+
   ctx.scale(
     -1,
     1
   );
+
 
   ctx.drawImage(
     video,
@@ -779,33 +959,19 @@ function capture(){
     canvas.height
   );
 
+
   ctx.restore();
 
 
   /* -----------------------------------------------
-     COMPACT VERIFICATION STAMP
+     VERIFICATION STAMP
   ----------------------------------------------- */
-
-  const pad =
-    Math.max(
-      20,
-      Math.round(
-        canvas.width * 0.026
-      )
-    );
-
-
-  /*
-   * Balanced stamp height.
-   * Enough space for title,
-   * TM, date/time and location.
-   */
 
   const stampHeight =
     Math.max(
-      250,
+      170,
       Math.round(
-        canvas.height * 0.27
+        canvas.height * 0.22
       )
     );
 
@@ -818,12 +984,9 @@ function capture(){
   ctx.save();
 
 
-  /* -----------------------------------------------
-     DARK STAMP BACKGROUND
-  ----------------------------------------------- */
-
   ctx.fillStyle =
-    "rgba(0,0,0,0.78)";
+    "rgba(0,0,0,0.76)";
+
 
   ctx.fillRect(
     0,
@@ -833,15 +996,20 @@ function capture(){
   );
 
 
-  /* -----------------------------------------------
-     FONT SIZES
-  ----------------------------------------------- */
+  const pad =
+    Math.max(
+      18,
+      Math.round(
+        canvas.width * 0.025
+      )
+    );
+
 
   const titleSize =
     Math.max(
-      25,
+      24,
       Math.round(
-        canvas.width * 0.034
+        canvas.width * 0.035
       )
     );
 
@@ -855,60 +1023,50 @@ function capture(){
     );
 
 
-  const locationSize =
-    Math.max(
-      16,
-      Math.round(
-        canvas.width * 0.020
-      )
-    );
-
-
-  /* -----------------------------------------------
-     TITLE
-  ----------------------------------------------- */
-
   ctx.fillStyle =
     "#ffffff";
+
 
   ctx.font =
     "700 " +
     titleSize +
     "px Arial";
 
-  let y =
-    stampY +
-    40;
-
 
   ctx.fillText(
     "AURUM • LIVE GPS VERIFIED",
     pad,
-    y
+    stampY +
+    titleSize +
+    10
   );
 
-
-  /* -----------------------------------------------
-     TM NAME
-  ----------------------------------------------- */
-
-  y += 38;
 
   ctx.font =
     "600 " +
     textSize +
     "px Arial";
 
+
   ctx.fillText(
     "TM: " + tm,
     pad,
-    y
+    stampY +
+    titleSize +
+    textSize +
+    25
   );
 
 
-  /* -----------------------------------------------
-     DATE & TIME
-  ----------------------------------------------- */
+  ctx.font =
+    "600 " +
+    Math.max(
+      16,
+      Math.round(
+        canvas.width * 0.020
+      )
+    ) +
+    "px Arial";
 
   const dt =
     new Date().toLocaleString(
@@ -923,177 +1081,40 @@ function capture(){
       }
     );
 
-
-  y += 34;
-
   ctx.fillText(
     dt,
     pad,
-    y
+    stampY +
+    titleSize +
+    (textSize * 2) +
+    40
   );
-
-
-  /* -----------------------------------------------
-     LOCATION
-  ----------------------------------------------- */
-
-  y += 40;
-
-
-  /* -----------------------------------------------
-     LOCATION PIN
-  ----------------------------------------------- */
-
-  const pinX =
-    pad + 10;
-
-  const pinY =
-    y - 7;
-
-  const pinRadius =
-    Math.max(
-      9,
-      Math.round(
-        canvas.width * 0.012
-      )
-    );
-
-
-  /* Outer circle */
-
-  ctx.beginPath();
-
-  ctx.arc(
-    pinX,
-    pinY,
-    pinRadius,
-    0,
-    Math.PI * 2
-  );
-
-  ctx.fillStyle =
-    "#ffffff";
-
-  ctx.fill();
-
-
-  /* Pin point */
-
-  ctx.beginPath();
-
-  ctx.moveTo(
-    pinX -
-      pinRadius * 0.72,
-    pinY +
-      pinRadius * 0.45
-  );
-
-  ctx.lineTo(
-    pinX,
-    pinY +
-      pinRadius * 1.8
-  );
-
-  ctx.lineTo(
-    pinX +
-      pinRadius * 0.72,
-    pinY +
-      pinRadius * 0.45
-  );
-
-  ctx.closePath();
-
-  ctx.fillStyle =
-    "#ffffff";
-
-  ctx.fill();
-
-
-  /* Inner dot */
-
-  ctx.beginPath();
-
-  ctx.arc(
-    pinX,
-    pinY,
-    pinRadius * 0.35,
-    0,
-    Math.PI * 2
-  );
-
-  ctx.fillStyle =
-    "rgba(0,0,0,0.78)";
-
-  ctx.fill();
-
-
-  /* -----------------------------------------------
-     LOCATION LABEL
-  ----------------------------------------------- */
-
-  const locationStartX =
-    pad + 32;
-
-
-  ctx.font =
-    "700 " +
-    locationSize +
-    "px Arial";
-
-  ctx.fillStyle =
-    "#ffffff";
-
-
-  ctx.fillText(
-    "LOCATION",
-    locationStartX,
-    y
-  );
-
-
-  /* -----------------------------------------------
-     LOCATION TEXT
-  ----------------------------------------------- */
-
-  y += 29;
-
-
-  ctx.font =
-    "500 " +
-    locationSize +
-    "px Arial";
 
 
   const maxWidth =
     canvas.width -
-    locationStartX -
-    pad;
+    (pad * 2);
 
 
-  const locationText =
-    exact ||
-    area ||
-    "Location captured";
+  let line =
+    "LOCATION: ";
+
+
+  let y =
+    stampY +
+    titleSize +
+    (textSize * 3) +
+    55;
 
 
   const words =
-    locationText.split(/\s+/);
+    (
+      exactLocation ||
+      exact ||
+      area ||
+      "Location captured"
+    ).split(" ");
 
-
-  let line = "";
-
-  const lineHeight =
-    Math.max(
-      23,
-      Math.round(
-        canvas.width * 0.027
-      )
-    );
-
-
-  /* -----------------------------------------------
-     AUTOMATIC LOCATION WRAPPING
-  ----------------------------------------------- */
 
   for(
     const word of words
@@ -1106,22 +1127,33 @@ function capture(){
 
 
     if(
-      ctx.measureText(test).width >
-        maxWidth &&
-      line !== ""
+      ctx.measureText(
+        test
+      ).width >
+      maxWidth &&
+      line !== "LOCATION: "
     ){
 
       ctx.fillText(
         line.trim(),
-        locationStartX,
+        pad,
         y
       );
 
+
       y +=
-        lineHeight;
+        Math.max(
+          22,
+          Math.round(
+            canvas.width * 0.026
+          )
+        );
+
 
       line =
-        word + " ";
+        "    " +
+        word +
+        " ";
 
     }else{
 
@@ -1133,26 +1165,16 @@ function capture(){
   }
 
 
-  /* Last location line */
-
-  if(
-    line.trim()
-  ){
-
-    ctx.fillText(
-      line.trim(),
-      locationStartX,
-      y
-    );
-
-  }
-
-
-  ctx.restore();
+  ctx.fillText(
+    line.trim(),
+    pad,
+    y
+  );
+ctx.restore();
 
 
   /* -----------------------------------------------
-     CONVERT TO IMAGE
+     CONVERT IMAGE
   ----------------------------------------------- */
 
   const image =
@@ -1162,116 +1184,14 @@ function capture(){
     );
 
 
-  /* -----------------------------------------------
-     STOP LIVE CAMERA
-  ----------------------------------------------- */
-
-  stopCamera();
-
-
   document.getElementById(
     "capture"
   ).disabled = true;
 
 
-  document.getElementById(
-    "status"
-  ).textContent =
-    "✓ Selfie captured successfully";
-
-
-  document.getElementById(
-    "status"
-  ).style.color =
-    "#08714f";
-
-
-  document.getElementById(
-    "msg"
-  ).textContent =
-    "Sending selfie to Aurum Sync...";
-
-
-  document.getElementById(
-    "msg"
-  ).style.color =
-    "#08714f";
-
-
-  /* -----------------------------------------------
-     SEND IMAGE TO AURUM SYNC
-  ----------------------------------------------- */
-
-  try{
-
-    sendCaptureToAurum(image);
-
-
-    document.getElementById(
-      "msg"
-    ).textContent =
-      "✓ Selfie sent to Aurum Sync. Closing camera...";
-
-
-    /*
-     * Give the opener enough time to
-     * receive the base64 image before
-     * closing this camera window.
-     */
-
-    setTimeout(
-      function(){
-
-        if(window.opener){
-
-          try{
-            window.opener.focus();
-          }catch(e){}
-
-          window.close();
-
-        }else if(returnUrl){
-
-          window.location.href =
-            returnUrl;
-
-        }
-
-      },
-      700
-    );
-
-
-  }catch(e){
-
-    console.error(
-      "Capture transfer error:",
-      e
-    );
-
-
-    document.getElementById(
-      "status"
-    ).textContent =
-      "Transfer failed";
-
-
-    document.getElementById(
-      "msg"
-    ).textContent =
-      e.message ||
-      "Please reopen LIVE GPS SELFIE from Aurum Sync.";
-
-
-    document.getElementById(
-      "msg"
-    ).style.color =
-      "#b3261e";
-
-
-    busy = false;
-
-  }
+  submitCapture(
+    image
+  );
 
 }
 
@@ -1298,11 +1218,9 @@ window.addEventListener(
   "load",
   function(){
 
-    /*
-     * Camera permission request starts
-     * automatically when this page loads.
-     */
-
+    /* Ask for BOTH permissions automatically.
+       The user only needs to press CAPTURE after they are granted. */
+    startLiveLocation();
     startCamera();
 
   }
