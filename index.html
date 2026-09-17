@@ -311,8 +311,11 @@ let exactLocation = params.get("exact") || "";
 
 let latitude = Number(params.get("lat"));
 let longitude = Number(params.get("lon"));
+let gpsAccuracy = Number(params.get("accuracy"));
+
 if(!Number.isFinite(latitude)) latitude = null;
 if(!Number.isFinite(longitude)) longitude = null;
+if(!Number.isFinite(gpsAccuracy)) gpsAccuracy = null;
 
 let stream = null;
 let busy = false;
@@ -335,6 +338,13 @@ document.getElementById("area")
 
 document.getElementById("exact")
   .textContent = exactLocation || "Location not available";
+
+if(gpsAccuracy !== null){
+  document.getElementById("status").textContent =
+    "GPS accuracy • ±" +
+    Math.round(gpsAccuracy) +
+    " m";
+}
 
 
 /* =====================================================
@@ -461,7 +471,15 @@ function getExactLocation(){
         exactLocation;
 
       document.getElementById("status").textContent =
-        "✓ Camera + Location ready — capture when ready";
+        "✓ Camera + Exact GPS ready" +
+        (
+          gpsAccuracy !== null
+            ? " • ±" +
+              Math.round(gpsAccuracy) +
+              " m"
+            : ""
+        ) +
+        " — capture when ready";
       document.getElementById("status").style.color = "#08714f";
       document.getElementById("msg").textContent = "";
       document.getElementById("msg").style.color = "#08714f";
@@ -519,47 +537,77 @@ function getExactLocation(){
 
 function startLiveLocation(){
 
-  /* If Aurum Sync supplied live GPS + resolved addresses, use them directly. */
-  if(latitude !== null && longitude !== null && exactLocation && areaLocation){
+  /*
+   * Normal Aurum Sync flow:
+   * INDEX has already obtained a high-accuracy GPS fix and
+   * resolved the exact address before navigating here.
+   */
+  if(
+    latitude !== null &&
+    longitude !== null &&
+    exactLocation &&
+    exactLocation !== "Location captured" &&
+    exactLocation !== "Location not available"
+  ){
+
     locationReady = true;
     exactLocationReady = true;
-    document.getElementById("area").textContent = areaLocation;
-    document.getElementById("exact").textContent = exactLocation;
-    document.getElementById("status").textContent = "✓ Location verified • Requesting Camera permission...";
-    document.getElementById("status").style.color = "#08714f";
+
+    document.getElementById("area").textContent =
+      areaLocation || exactLocation;
+
+    document.getElementById("exact").textContent =
+      exactLocation;
+
+    document.getElementById("status").textContent =
+      "✓ GPS verified" +
+      (
+        gpsAccuracy !== null
+          ? " • ±" +
+            Math.round(gpsAccuracy) +
+            " m accuracy"
+          : ""
+      ) +
+      " • Requesting camera...";
+
+    document.getElementById("status").style.color =
+      "#08714f";
+
+    document.getElementById("msg").textContent =
+      "";
+
     startCamera();
     return;
   }
 
-  const status =
-    document.getElementById("status");
-
-  const msg =
-    document.getElementById("msg");
-
+  /*
+   * Direct-open fallback:
+   * If someone opens the GitHub camera directly, acquire
+   * high-accuracy GPS and resolve the address through the
+   * Apps Script JSONP endpoint.
+   */
   if(!navigator.geolocation){
 
-    status.textContent =
+    document.getElementById("status").textContent =
       "Location permission required";
 
-    status.style.color =
+    document.getElementById("status").style.color =
       "#b3261e";
 
-    msg.textContent =
+    document.getElementById("msg").textContent =
       "Location is not supported on this device.";
 
     updateCaptureAvailability();
-
     return;
   }
 
-  status.textContent =
-    "Requesting Location permission...";
+  document.getElementById("status").textContent =
+    "Requesting precise GPS location...";
 
-  status.style.color =
+  document.getElementById("status").style.color =
     "#08714f";
 
-  msg.textContent =
+  document.getElementById("msg").textContent =
     "Please tap Allow for Location.";
 
   navigator.geolocation.getCurrentPosition(
@@ -567,54 +615,62 @@ function startLiveLocation(){
     function(position){
 
       latitude =
-        Number(position.coords.latitude);
+        Number(
+          position.coords.latitude
+        );
 
       longitude =
-        Number(position.coords.longitude);
+        Number(
+          position.coords.longitude
+        );
 
-      locationReady = true;
+      gpsAccuracy =
+        Number(
+          position.coords.accuracy
+        );
 
-      status.textContent =
-        "✓ Location permission granted";
+      if(!Number.isFinite(gpsAccuracy)){
+        gpsAccuracy = null;
+      }
 
-      status.style.color =
-        "#08714f";
-
-      msg.textContent =
-        "Requesting Camera permission...";
+      locationReady =
+        true;
 
       getExactLocation();
-
-      /*
-        Camera permission is requested only after
-        the live location has been obtained.
-      */
-      startCamera();
 
     },
 
     function(error){
 
-      locationReady = false;
+      locationReady =
+        false;
 
-      status.textContent =
+      exactLocationReady =
+        false;
+
+      document.getElementById("status").textContent =
         "Location permission required";
 
-      status.style.color =
+      document.getElementById("status").style.color =
         "#b3261e";
 
       if(
         error &&
         error.code === 1
       ){
-        msg.textContent =
+
+        document.getElementById("msg").textContent =
           "Location access was denied. Chrome Site Settings → Location → Allow, then refresh.";
+
       }else{
-        msg.textContent =
-          "Unable to get live location. Please allow Location access and try again.";
+
+        document.getElementById("msg").textContent =
+          "Unable to get precise live GPS location. Please allow Location access and try again.";
+
       }
 
       updateCaptureAvailability();
+
     },
 
     {
@@ -703,7 +759,15 @@ async function startCamera(){
 
     status.textContent =
       exactLocationReady
-        ? "✓ Camera + Location ready — capture when ready"
+        ? "✓ Camera + Exact GPS ready" +
+          (
+            gpsAccuracy !== null
+              ? " • ±" +
+                Math.round(gpsAccuracy) +
+                " m"
+              : ""
+          ) +
+          " — capture when ready"
         : "✓ Camera ready • Verifying exact location...";
 
     status.style.color =
@@ -806,7 +870,9 @@ function capture(){
   canvas.height =
     video.videoHeight;
 
-  /* Mirror correction */
+  /*
+   * Mirror correction for selfie preview.
+   */
   ctx.save();
 
   ctx.translate(
@@ -814,7 +880,10 @@ function capture(){
     0
   );
 
-  ctx.scale(-1,1);
+  ctx.scale(
+    -1,
+    1
+  );
 
   ctx.drawImage(
     video,
@@ -827,45 +896,18 @@ function capture(){
   ctx.restore();
 
 
-  /* =================================================
-     STAMP
-     AURUM
-     TM
-     DATE/TIME
-     LOCATION
-  ================================================= */
-
-  const stampHeight =
-    Math.max(
-      185,
-      Math.round(
-        canvas.height * 0.30
-      )
-    );
-
-  const stampY =
-    canvas.height -
-    stampHeight;
-
+  /*
+   * ===================================================
+   * VERIFIED GPS STAMP
+   * ===================================================
+   */
   const pad =
     Math.max(
-      18,
+      24,
       Math.round(
-        canvas.width * 0.025
+        canvas.width * 0.026
       )
     );
-
-  ctx.save();
-
-  ctx.fillStyle =
-    "rgba(0,0,0,0.76)";
-
-  ctx.fillRect(
-    0,
-    stampY,
-    canvas.width,
-    stampHeight
-  );
 
   const titleSize =
     Math.max(
@@ -875,45 +917,105 @@ function capture(){
       )
     );
 
-  const textSize =
+  const bodySize =
     Math.max(
-      18,
+      17,
       Math.round(
-        canvas.width * 0.022
+        canvas.width * 0.021
       )
     );
 
-  ctx.fillStyle =
-    "#ffffff";
+  const smallSize =
+    Math.max(
+      15,
+      Math.round(
+        canvas.width * 0.018
+      )
+    );
 
-  ctx.font =
-    "800 " +
-    titleSize +
-    "px Arial";
+  const maxTextWidth =
+    canvas.width -
+    (pad * 2);
 
-  ctx.fillText(
-    "AURUM • LIVE GPS VERIFIED",
-    pad,
-    stampY +
-    titleSize +
-    10
-  );
+  /*
+   * Split long strings into wrapped lines.
+   */
+  function wrapText(
+    text,
+    font,
+    maxWidth
+  ){
 
-  ctx.font =
-    "700 " +
-    textSize +
-    "px Arial";
+    ctx.font = font;
 
-  ctx.fillText(
-    "TM: " + tm,
-    pad,
-    stampY +
-    titleSize +
-    textSize +
-    25
-  );
+    const words =
+      String(text || "")
+        .split(/\s+/)
+        .filter(Boolean);
 
-  const dateTime =
+    const lines = [];
+    let line = "";
+
+    words.forEach(function(word){
+
+      const test =
+        line
+          ? line + " " + word
+          : word;
+
+      if(
+        ctx.measureText(test).width >
+        maxWidth &&
+        line
+      ){
+
+        lines.push(line);
+        line = word;
+
+      }else{
+
+        line = test;
+      }
+
+    });
+
+    if(line){
+      lines.push(line);
+    }
+
+    return lines.length
+      ? lines
+      : [""];
+  }
+
+  const exactText =
+    String(
+      exactLocation || ""
+    ).trim();
+
+  const locationLines =
+    wrapText(
+      exactText,
+      "700 " +
+      bodySize +
+      "px Arial",
+      maxTextWidth
+    );
+
+  const gpsText =
+    "GPS: " +
+    Number(latitude).toFixed(6) +
+    ", " +
+    Number(longitude).toFixed(6) +
+    (
+      gpsAccuracy !== null
+        ? " • Accuracy ±" +
+          Math.round(gpsAccuracy) +
+          " m"
+        : ""
+    );
+
+  const dateText =
     new Date().toLocaleString(
       "en-IN",
       {
@@ -926,131 +1028,146 @@ function capture(){
       }
     );
 
-  ctx.font =
-    "600 " +
-    Math.max(
-      16,
-      Math.round(
-        canvas.width * 0.020
-      )
-    ) +
-    "px Arial";
-
-  ctx.fillText(
-    dateTime,
-    pad,
-    stampY +
-    titleSize +
-    (textSize * 2) +
-    40
-  );
-
-
-  /* LOCATION PIN */
-  const pinX = pad + 8;
-  const pinY =
-    stampY +
-    titleSize +
-    (textSize * 3) +
-    67;
-
-  ctx.beginPath();
-  ctx.arc(
-    pinX,
-    pinY,
-    7,
-    0,
-    Math.PI * 2
-  );
-  ctx.fillStyle = "#ffffff";
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.moveTo(
-    pinX - 6,
-    pinY + 5
-  );
-  ctx.lineTo(
-    pinX,
-    pinY + 14
-  );
-  ctx.lineTo(
-    pinX + 6,
-    pinY + 5
-  );
-  ctx.closePath();
-  ctx.fill();
-
-
-  const maxWidth =
-    canvas.width -
-    (pad * 2) -
-    30;
-
-  let line =
-    "📍 EXACT LOCATION: ";
-
-  let y =
-    stampY +
-    titleSize +
-    (textSize * 3) +
-    55;
-
   const lineHeight =
     Math.max(
-      22,
+      24,
       Math.round(
-        canvas.width * 0.026
+        canvas.width * 0.027
       )
     );
 
-  const stampExactLocation =
-    String(exactLocation || "").trim();
+  const stampHeight =
+    Math.max(
+      190,
+      (
+        34 +
+        titleSize +
+        14 +
+        bodySize +
+        12 +
+        smallSize +
+        16 +
+        locationLines.length *
+          lineHeight +
+        12 +
+        smallSize +
+        20
+      )
+    );
 
-  /* Never stamp the generic "Location captured" text. */
-  const words =
-    (
-      stampExactLocation ||
-      "Location not available"
-    ).split(" ");
+  const stampY =
+    canvas.height -
+    stampHeight;
 
-  words.forEach(function(word){
+  ctx.save();
 
-    const test =
-      line +
-      word +
-      " ";
+  ctx.fillStyle =
+    "rgba(0,0,0,0.80)";
 
-    if(
-      ctx.measureText(test).width >
-      maxWidth &&
-      line !== "📍 EXACT LOCATION: "
-    ){
+  ctx.fillRect(
+    0,
+    stampY,
+    canvas.width,
+    stampHeight
+  );
+
+  let y =
+    stampY +
+    34;
+
+  ctx.fillStyle =
+    "#ffffff";
+
+  ctx.font =
+    "800 " +
+    titleSize +
+    "px Arial";
+
+  ctx.fillText(
+    "AURUM • LIVE GPS VERIFIED",
+    pad,
+    y
+  );
+
+  y +=
+    titleSize +
+    13;
+
+  ctx.font =
+    "700 " +
+    bodySize +
+    "px Arial";
+
+  ctx.fillText(
+    "TM: " +
+    tm,
+    pad,
+    y
+  );
+
+  y +=
+    bodySize +
+    10;
+
+  ctx.font =
+    "600 " +
+    smallSize +
+    "px Arial";
+
+  ctx.fillText(
+    "DATE / TIME: " +
+    dateText,
+    pad,
+    y
+  );
+
+  y +=
+    smallSize +
+    14;
+
+  ctx.font =
+    "700 " +
+    bodySize +
+    "px Arial";
+
+  ctx.fillText(
+    "📍 EXACT LOCATION:",
+    pad,
+    y
+  );
+
+  y +=
+    bodySize +
+    8;
+
+  ctx.font =
+    "700 " +
+    bodySize +
+    "px Arial";
+
+  locationLines.forEach(
+    function(line){
 
       ctx.fillText(
-        line.trim(),
-        pad + 22,
+        line,
+        pad,
         y
       );
 
-      y += lineHeight;
-
-      line =
-        "            " +
-        word +
-        " ";
-
-    }else{
-
-      line = test;
-
+      y +=
+        lineHeight;
     }
-  });
+  );
+
+  ctx.font =
+    "600 " +
+    smallSize +
+    "px Arial";
 
   ctx.fillText(
-    line.trim(),
-    pad + 22,
-    y
+    gpsText,
+    pad,
+    y + 2
   );
 
   ctx.restore();
@@ -1059,7 +1176,7 @@ function capture(){
   const image =
     canvas.toDataURL(
       "image/jpeg",
-      0.90
+      0.92
     );
 
   document.getElementById("capture")
