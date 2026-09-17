@@ -284,75 +284,43 @@ canvas{
 
 
 <script>
-
-/* =====================================================
-   READ URL PARAMETERS
-===================================================== */
-
 const params =
-  new URLSearchParams(
-    window.location.search
-  );
-
+  new URLSearchParams(location.search);
 
 const tm =
   params.get("tm") || "-";
 
-
 const hq =
   params.get("hq") || "-";
-
-
-const area =
-  params.get("area") || "-";
-
-
-const exact =
-  params.get("exact") ||
-  area ||
-  "-";
-
-
-let latitude =
-  params.get("lat") || "";
-
-
-let longitude =
-  params.get("lon") || "";
-
 
 const tmCode =
   params.get("tmCode") || "";
 
-
 const returnUrl =
   params.get("returnUrl") || "";
 
+let latitude = null;
+let longitude = null;
+let exactLocation = "";
+
+let stream = null;
+let busy = false;
+let locationReady = false;
+let exactLocationReady = false;
+
 
 /* =====================================================
-   DISPLAY DETAILS
+   DISPLAY TM DETAILS
 ===================================================== */
 
 document.getElementById("tm")
   .textContent = tm;
 
-
 document.getElementById("hq")
   .textContent = hq;
 
-
 document.getElementById("area")
-  .textContent = exact || "Requesting live location...";
-
-
-/* =====================================================
-   CAMERA VARIABLES
-===================================================== */
-
-let stream = null;
-
-let busy = false;
-let locationReady = false;
+  .textContent = "Requesting live location...";
 
 
 /* =====================================================
@@ -365,15 +333,155 @@ function stopCamera(){
 
     stream
       .getTracks()
-      .forEach(
-        function(track){
-          track.stop();
-        }
-      );
+      .forEach(function(track){
+        track.stop();
+      });
 
     stream = null;
   }
+}
 
+
+/* =====================================================
+   UPDATE CAPTURE BUTTON
+===================================================== */
+
+function updateCaptureAvailability(){
+
+  const captureBtn =
+    document.getElementById("capture");
+
+  captureBtn.disabled =
+    !(
+      stream &&
+      locationReady &&
+      exactLocationReady
+    );
+}
+
+
+/* =====================================================
+   GET EXACT LOCATION FROM APPS SCRIPT
+   JSONP avoids cross-origin fetch/CORS issues.
+===================================================== */
+
+function getExactLocation(){
+
+  if(
+    latitude === null ||
+    longitude === null
+  ){
+    return;
+  }
+
+  exactLocationReady = false;
+
+  document.getElementById("area")
+    .textContent =
+      "Finding exact location...";
+
+  const callbackName =
+    "__aurumLocation_" +
+    Date.now();
+
+  window[callbackName] =
+    function(data){
+
+      try{
+
+        data = data || {};
+
+        exactLocation =
+          data.exactLocation ||
+          "Location captured";
+
+        document.getElementById("area")
+          .textContent =
+            exactLocation;
+
+        exactLocationReady = true;
+
+        document.getElementById("status")
+          .textContent =
+            "✓ Camera + Location ready — capture when ready";
+
+        document.getElementById("status")
+          .style.color =
+            "#08714f";
+
+        document.getElementById("msg")
+          .textContent = "";
+
+        updateCaptureAvailability();
+
+      }finally{
+
+        try{
+          delete window[callbackName];
+        }catch(e){}
+
+        if(script && script.parentNode){
+          script.parentNode.removeChild(script);
+        }
+      }
+    };
+
+  const script =
+    document.createElement("script");
+
+  /*
+    returnUrl is the Apps Script web-app URL.
+    Its origin is trusted because it was supplied by Aurum Sync.
+  */
+  const endpoint =
+    returnUrl +
+    (
+      returnUrl.indexOf("?") >= 0
+        ? "&"
+        : "?"
+    ) +
+    "action=location" +
+    "&lat=" +
+    encodeURIComponent(latitude) +
+    "&lon=" +
+    encodeURIComponent(longitude) +
+    "&callback=" +
+    encodeURIComponent(callbackName);
+
+  script.src = endpoint;
+
+  script.onerror =
+    function(){
+
+      exactLocation =
+        "Location captured";
+
+      document.getElementById("area")
+        .textContent =
+          exactLocation;
+
+      exactLocationReady = true;
+
+      document.getElementById("status")
+        .textContent =
+          "✓ Camera + GPS ready — capture when ready";
+
+      document.getElementById("status")
+        .style.color =
+          "#08714f";
+
+      updateCaptureAvailability();
+
+      try{
+        delete window[callbackName];
+      }catch(e){}
+
+      if(script.parentNode){
+        script.parentNode.removeChild(script);
+      }
+    };
+
+  document.head.appendChild(script);
 }
 
 
@@ -394,44 +502,54 @@ function startLiveLocation(){
     status.textContent =
       "Location permission required";
 
+    status.style.color =
+      "#b3261e";
+
     msg.textContent =
       "Location is not supported on this device.";
 
-    msg.style.color="#b3261e";
+    updateCaptureAvailability();
 
     return;
   }
 
   status.textContent =
-    "Requesting location permission...";
+    "Requesting Location permission...";
+
+  status.style.color =
+    "#08714f";
 
   msg.textContent =
-    "Please allow Location access for this site.";
+    "Please tap Allow for Location.";
 
   navigator.geolocation.getCurrentPosition(
 
     function(position){
 
-      latitude = position.coords.latitude;
-      longitude = position.coords.longitude;
+      latitude =
+        Number(position.coords.latitude);
+
+      longitude =
+        Number(position.coords.longitude);
+
       locationReady = true;
 
       status.textContent =
-        "✓ Location ready • Starting camera...";
+        "✓ Location permission granted";
 
-      status.style.color="#08714f";
+      status.style.color =
+        "#08714f";
 
-      try{
-        if(window.opener){
-          window.opener.postMessage({
-            type:"AURUM_GPS_LOCATION_READY",
-            latitude:Number(latitude),
-            longitude:Number(longitude)
-          },"*");
-        }
-      }catch(e){}
+      msg.textContent =
+        "Requesting Camera permission...";
 
-      updateCaptureAvailability();
+      getExactLocation();
+
+      /*
+        Camera permission is requested only after
+        the live location has been obtained.
+      */
+      startCamera();
 
     },
 
@@ -442,9 +560,13 @@ function startLiveLocation(){
       status.textContent =
         "Location permission required";
 
-      msg.style.color="#b3261e";
+      status.style.color =
+        "#b3261e";
 
-      if(error && error.code === 1){
+      if(
+        error &&
+        error.code === 1
+      ){
         msg.textContent =
           "Location access was denied. Chrome Site Settings → Location → Allow, then refresh.";
       }else{
@@ -465,54 +587,8 @@ function startLiveLocation(){
 
 
 /* =====================================================
-   RECEIVE EXACT LOCATION FROM AURUM SYNC
+   REQUEST CAMERA
 ===================================================== */
-
-window.addEventListener("message", function(event){
-
-  const data = event.data || {};
-
-  if(data.type !== "AURUM_GPS_LOCATION_DETAILS"){
-    return;
-  }
-
-  exactLocation =
-    data.exactLocation ||
-    data.areaLocation ||
-    exact ||
-    area ||
-    "Location captured";
-
-  document.getElementById("area").textContent =
-    exactLocation;
-
-  document.getElementById("msg").textContent =
-    "✓ Camera + Location verified. You can capture now.";
-
-  document.getElementById("msg").style.color =
-    "#08714f";
-
-  updateCaptureAvailability();
-
-});
-
-
-function updateCaptureAvailability(){
-
-  const captureBtn =
-    document.getElementById("capture");
-
-  captureBtn.disabled =
-    !(stream && locationReady);
-
-}
-
-
-/* =====================================================
-   START CAMERA
-===================================================== */
-
-
 
 async function startCamera(){
 
@@ -528,116 +604,42 @@ async function startCamera(){
   const retakeBtn =
     document.getElementById("retake");
 
-
-  msg.textContent = "";
-
-  msg.style.color = "#b3261e";
-
   captureBtn.disabled = true;
 
   retakeBtn.style.display = "none";
 
-
   stopCamera();
-
 
   try{
 
-    /* -----------------------------------------------
-       SECURE CONNECTION CHECK
-    ----------------------------------------------- */
-
-    if(
-      !window.isSecureContext
-    ){
-
+    if(!window.isSecureContext){
       throw new Error(
-        "This camera requires HTTPS."
+        "Camera requires a secure HTTPS page."
       );
-
     }
-
-
-    /* -----------------------------------------------
-       CAMERA API CHECK
-    ----------------------------------------------- */
 
     if(
       !navigator.mediaDevices ||
       !navigator.mediaDevices.getUserMedia
     ){
-
       throw new Error(
         "Camera API is not available in this browser."
       );
-
     }
-
 
     status.textContent =
-      "Requesting camera permission...";
+      "Requesting Camera permission...";
 
+    status.style.color =
+      "#08714f";
 
-    /* -----------------------------------------------
-       CAMERA PERMISSION STATE
-    ----------------------------------------------- */
-
-    try{
-
-      if(
-        navigator.permissions &&
-        navigator.permissions.query
-      ){
-
-        const permission =
-          await navigator.permissions.query({
-            name:"camera"
-          });
-
-
-        if(
-          permission.state === "denied"
-        ){
-
-          throw new Error(
-            "Camera permission is BLOCKED for this site. Open Chrome Site Settings → Camera → Allow."
-          );
-
-        }
-
-      }
-
-    }catch(permissionError){
-
-      /*
-       * Ignore unsupported Permissions API.
-       * Actual getUserMedia call below remains
-       * the final authority.
-       */
-
-      if(
-        permissionError.message &&
-        permissionError.message.indexOf(
-          "BLOCKED"
-        ) !== -1
-      ){
-
-        throw permissionError;
-
-      }
-
-    }
-
-
-    /* -----------------------------------------------
-       REQUEST CAMERA
-    ----------------------------------------------- */
-
-    stream =
+    const newStream =
       await navigator.mediaDevices.getUserMedia({
 
         video:{
-          facingMode:"user",
+          facingMode:{
+            ideal:"user"
+          },
           width:{
             ideal:1280
           },
@@ -647,237 +649,84 @@ async function startCamera(){
         },
 
         audio:false
-
       });
 
-
-    /* -----------------------------------------------
-       CONNECT STREAM TO VIDEO
-    ----------------------------------------------- */
+    stream = newStream;
 
     const video =
       document.getElementById("video");
 
-
     video.srcObject =
       stream;
 
-
     await video.play();
 
-
-    /* -----------------------------------------------
-       CAMERA READY
-    ----------------------------------------------- */
-
     status.textContent =
-      "✓ Camera ready — capture when ready";
-
+      exactLocationReady
+        ? "✓ Camera + Location ready — capture when ready"
+        : "✓ Camera ready • Verifying exact location...";
 
     status.style.color =
       "#08714f";
 
+    msg.textContent =
+      exactLocationReady
+        ? ""
+        : "Please wait for exact location verification.";
 
     updateCaptureAvailability();
 
-
-  }catch(e){
+  }catch(error){
 
     console.error(
       "Camera Error:",
-      e
+      error
     );
-
 
     status.textContent =
       "Camera permission required";
 
-
     status.style.color =
       "#b3261e";
 
-
-    let errorMessage =
-      "";
-
-
-    /* -----------------------------------------------
-       EXACT ERROR
-    ----------------------------------------------- */
-
     if(
-      e.name === "NotAllowedError"
+      error &&
+      error.name === "NotAllowedError"
     ){
 
-      errorMessage =
+      msg.textContent =
         "Camera access was denied. Chrome Site Settings → Camera → Allow for giovanni-gautam.github.io, then refresh.";
 
-    }
-
-    else if(
-      e.name === "NotFoundError"
+    }else if(
+      error &&
+      error.name === "NotFoundError"
     ){
 
-      errorMessage =
+      msg.textContent =
         "No camera was found on this device.";
 
-    }
-
-    else if(
-      e.name === "NotReadableError"
+    }else if(
+      error &&
+      error.name === "NotReadableError"
     ){
 
-      errorMessage =
+      msg.textContent =
         "Camera is already being used by another application.";
 
-    }
+    }else{
 
-    else if(
-      e.name === "SecurityError"
-    ){
-
-      errorMessage =
-        "Browser security blocked camera access.";
-
-    }
-
-    else{
-
-      errorMessage =
-        e.message ||
+      msg.textContent =
+        error.message ||
         "Please allow camera access.";
-
     }
 
-
-    msg.textContent =
-      errorMessage;
-
-
-    captureBtn.disabled =
-      true;
-
+    updateCaptureAvailability();
   }
-
 }
 
 
 /* =====================================================
-   CLOSE CAMERA
-===================================================== */
-
-function goBack(){
-
-  stopCamera();
-
-
-  if(returnUrl){
-
-    window.location.href =
-      returnUrl;
-
-  }else{
-
-    window.history.back();
-
-  }
-
-}
-
-
-/* =====================================================
-   SUBMIT CAPTURE
-===================================================== */
-
-async function submitCapture(image){
-
-  const status =
-    document.getElementById("status");
-
-  const msg =
-    document.getElementById("msg");
-
-  if(
-    !returnUrl ||
-    !tmCode ||
-    !latitude ||
-    !longitude
-  ){
-
-    status.textContent =
-      "Selfie captured";
-
-    msg.textContent =
-      "Live GPS information is missing. Please reopen LIVE GPS SELFIE from Aurum Sync.";
-
-    msg.style.color =
-      "#b3261e";
-
-    busy = false;
-    return;
-  }
-
-  status.textContent =
-    "✓ Selfie captured";
-
-  msg.textContent =
-    "Sending selfie to Aurum Sync...";
-
-  msg.style.color =
-    "#08714f";
-
-  try{
-
-    if(!window.opener){
-      throw new Error(
-        "Aurum Sync window is not available."
-      );
-    }
-
-    window.opener.postMessage({
-      type:"AURUM_GPS_SELFIE_CAPTURE",
-      image:image,
-      tmCode:tmCode,
-      latitude:Number(latitude),
-      longitude:Number(longitude),
-      tm:tm,
-      hq:hq,
-      area:area,
-      exactLocation:exactLocation || exact || area
-    },"*");
-
-    stopCamera();
-
-    setTimeout(function(){
-      try{
-        window.close();
-      }catch(e){}
-    },700);
-
-  }catch(e){
-
-    console.error(
-      "Capture transfer error:",
-      e
-    );
-
-    status.textContent =
-      "Transfer failed";
-
-    msg.textContent =
-      "Please reopen LIVE GPS SELFIE and try again.";
-
-    msg.style.color =
-      "#b3261e";
-
-    busy = false;
-  }
-
-}
-
-
-/* =====================================================
-   CAPTURE SELFIE
+   CAPTURE
 ===================================================== */
 
 function capture(){
@@ -885,72 +734,44 @@ function capture(){
   if(
     busy ||
     !stream ||
-    !locationReady
+    !locationReady ||
+    !exactLocationReady
   ){
-
     return;
-
   }
-
 
   busy = true;
 
-
   const video =
-    document.getElementById(
-      "video"
-    );
-
+    document.getElementById("video");
 
   const canvas =
-    document.getElementById(
-      "canvas"
-    );
-
+    document.getElementById("canvas");
 
   const ctx =
-    canvas.getContext(
-      "2d"
-    );
+    canvas.getContext("2d");
 
-
-  if(
-    !video.videoWidth
-  ){
+  if(!video.videoWidth){
 
     busy = false;
-
     return;
-
   }
-
 
   canvas.width =
     video.videoWidth;
 
-
   canvas.height =
     video.videoHeight;
 
-
-  /* -----------------------------------------------
-     MIRROR CORRECTION
-  ----------------------------------------------- */
-
+  /* Mirror correction */
   ctx.save();
-
 
   ctx.translate(
     canvas.width,
     0
   );
 
-
-  ctx.scale(
-    -1,
-    1
-  );
-
+  ctx.scale(-1,1);
 
   ctx.drawImage(
     video,
@@ -960,42 +781,28 @@ function capture(){
     canvas.height
   );
 
-
   ctx.restore();
 
 
-  /* -----------------------------------------------
-     VERIFICATION STAMP
-  ----------------------------------------------- */
+  /* =================================================
+     STAMP
+     AURUM
+     TM
+     DATE/TIME
+     LOCATION
+  ================================================= */
 
   const stampHeight =
     Math.max(
-      170,
+      185,
       Math.round(
         canvas.height * 0.22
       )
     );
 
-
   const stampY =
     canvas.height -
     stampHeight;
-
-
-  ctx.save();
-
-
-  ctx.fillStyle =
-    "rgba(0,0,0,0.76)";
-
-
-  ctx.fillRect(
-    0,
-    stampY,
-    canvas.width,
-    stampHeight
-  );
-
 
   const pad =
     Math.max(
@@ -1005,34 +812,41 @@ function capture(){
       )
     );
 
+  ctx.save();
+
+  ctx.fillStyle =
+    "rgba(0,0,0,0.76)";
+
+  ctx.fillRect(
+    0,
+    stampY,
+    canvas.width,
+    stampHeight
+  );
 
   const titleSize =
     Math.max(
-      24,
+      22,
       Math.round(
-        canvas.width * 0.035
+        canvas.width * 0.032
       )
     );
-
 
   const textSize =
     Math.max(
       18,
       Math.round(
-        canvas.width * 0.023
+        canvas.width * 0.022
       )
     );
-
 
   ctx.fillStyle =
     "#ffffff";
 
-
   ctx.font =
-    "700 " +
+    "800 " +
     titleSize +
     "px Arial";
-
 
   ctx.fillText(
     "AURUM • LIVE GPS VERIFIED",
@@ -1042,12 +856,10 @@ function capture(){
     10
   );
 
-
   ctx.font =
-    "600 " +
+    "700 " +
     textSize +
     "px Arial";
-
 
   ctx.fillText(
     "TM: " + tm,
@@ -1058,18 +870,7 @@ function capture(){
     25
   );
 
-
-  ctx.font =
-    "600 " +
-    Math.max(
-      16,
-      Math.round(
-        canvas.width * 0.020
-      )
-    ) +
-    "px Arial";
-
-  const dt =
+  const dateTime =
     new Date().toLocaleString(
       "en-IN",
       {
@@ -1082,8 +883,18 @@ function capture(){
       }
     );
 
+  ctx.font =
+    "600 " +
+    Math.max(
+      16,
+      Math.round(
+        canvas.width * 0.020
+      )
+    ) +
+    "px Arial";
+
   ctx.fillText(
-    dt,
+    dateTime,
     pad,
     stampY +
     titleSize +
@@ -1092,14 +903,49 @@ function capture(){
   );
 
 
+  /* LOCATION PIN */
+  const pinX = pad + 8;
+  const pinY =
+    stampY +
+    titleSize +
+    (textSize * 3) +
+    67;
+
+  ctx.beginPath();
+  ctx.arc(
+    pinX,
+    pinY,
+    7,
+    0,
+    Math.PI * 2
+  );
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(
+    pinX - 6,
+    pinY + 5
+  );
+  ctx.lineTo(
+    pinX,
+    pinY + 14
+  );
+  ctx.lineTo(
+    pinX + 6,
+    pinY + 5
+  );
+  ctx.closePath();
+  ctx.fill();
+
+
   const maxWidth =
     canvas.width -
-    (pad * 2);
-
+    (pad * 2) -
+    30;
 
   let line =
     "LOCATION: ";
-
 
   let y =
     stampY +
@@ -1107,123 +953,257 @@ function capture(){
     (textSize * 3) +
     55;
 
+  const lineHeight =
+    Math.max(
+      22,
+      Math.round(
+        canvas.width * 0.026
+      )
+    );
 
   const words =
     (
       exactLocation ||
-      exact ||
-      area ||
       "Location captured"
     ).split(" ");
 
-
-  for(
-    const word of words
-  ){
+  words.forEach(function(word){
 
     const test =
       line +
       word +
       " ";
 
-
     if(
-      ctx.measureText(
-        test
-      ).width >
+      ctx.measureText(test).width >
       maxWidth &&
       line !== "LOCATION: "
     ){
 
       ctx.fillText(
         line.trim(),
-        pad,
+        pad + 22,
         y
       );
 
-
-      y +=
-        Math.max(
-          22,
-          Math.round(
-            canvas.width * 0.026
-          )
-        );
-
+      y += lineHeight;
 
       line =
-        "    " +
+        "            " +
         word +
         " ";
 
     }else{
 
-      line =
-        test;
+      line = test;
 
     }
-
-  }
-
+  });
 
   ctx.fillText(
     line.trim(),
-    pad,
+    pad + 22,
     y
   );
-ctx.restore();
 
+  ctx.restore();
 
-  /* -----------------------------------------------
-     CONVERT IMAGE
-  ----------------------------------------------- */
 
   const image =
     canvas.toDataURL(
       "image/jpeg",
-      0.88
+      0.90
     );
 
+  document.getElementById("capture")
+    .disabled = true;
 
-  document.getElementById(
-    "capture"
-  ).disabled = true;
-
-
-  submitCapture(
-    image
-  );
-
+  submitCapture(image);
 }
 
 
 /* =====================================================
-   STOP CAMERA WHEN PAGE CLOSES
+   SUBMIT FROM SAME-TAB CAMERA
+   Uses normal HTML form POST — no CORS/fetch.
 ===================================================== */
 
-window.addEventListener(
-  "beforeunload",
-  function(){
+function submitCapture(image){
 
-    stopCamera();
+  const status =
+    document.getElementById("status");
 
+  const msg =
+    document.getElementById("msg");
+
+  if(
+    !returnUrl ||
+    !tmCode ||
+    latitude === null ||
+    longitude === null ||
+    !image
+  ){
+
+    status.textContent =
+      "Submission data missing";
+
+    status.style.color =
+      "#b3261e";
+
+    msg.textContent =
+      "Please reopen LIVE GPS SELFIE from Aurum Sync.";
+
+    busy = false;
+
+    return;
   }
-);
+
+  status.textContent =
+    "✓ Selfie captured";
+
+  status.style.color =
+    "#08714f";
+
+  msg.textContent =
+    "Submitting selfie to Aurum Sync...";
+
+  msg.style.color =
+    "#08714f";
+
+  stopCamera();
+
+  const form =
+    document.createElement("form");
+
+  form.method =
+    "POST";
+
+  form.action =
+    returnUrl;
+
+  form.target =
+    "_self";
+
+  form.style.display =
+    "none";
+
+
+  function addField(
+    name,
+    value
+  ){
+
+    const input =
+      document.createElement("input");
+
+    input.type =
+      "hidden";
+
+    input.name =
+      name;
+
+    input.value =
+      value;
+
+    form.appendChild(input);
+  }
+
+
+  addField(
+    "tmCode",
+    tmCode
+  );
+
+  addField(
+    "latitude",
+    String(latitude)
+  );
+
+  addField(
+    "longitude",
+    String(longitude)
+  );
+
+  addField(
+    "image",
+    image
+  );
+
+  /*
+    Apps Script doPost uses this URL to return to
+    the portal after the selfie is saved.
+  */
+  addField(
+    "returnUrl",
+    returnUrl
+  );
+
+  document.body.appendChild(form);
+
+  form.submit();
+}
 
 
 /* =====================================================
-   START CAMERA AUTOMATICALLY
+   RETAKE
+===================================================== */
+
+document.getElementById("retake")
+  .addEventListener(
+    "click",
+    function(){
+
+      busy = false;
+      startCamera();
+
+    }
+  );
+
+
+/* =====================================================
+   CLOSE / BACK
+===================================================== */
+
+function goBack(){
+
+  stopCamera();
+
+  if(returnUrl){
+    window.location.href =
+      returnUrl;
+  }else{
+    window.history.back();
+  }
+}
+
+
+/* =====================================================
+   START AUTOMATICALLY
 ===================================================== */
 
 window.addEventListener(
   "load",
   function(){
 
-    /* Ask for BOTH permissions automatically.
-       The user only needs to press CAPTURE after they are granted. */
+    /*
+      Location permission first.
+      Then camera permission.
+      User only presses CAPTURE after both
+      permissions have been granted.
+    */
     startLiveLocation();
-    startCamera();
 
+  }
+);
+
+
+/* =====================================================
+   STOP CAMERA ON EXIT
+===================================================== */
+
+window.addEventListener(
+  "beforeunload",
+  function(){
+    stopCamera();
   }
 );
 
