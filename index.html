@@ -290,361 +290,832 @@ canvas{
 
 
 <script>
-const params = new URLSearchParams(location.search);
+const params =
+  new URLSearchParams(
+    location.search
+  );
 
-const tm = params.get('tm') || '-';
-const hq = params.get('hq') || '-';
-const tmCode = params.get('tmCode') || '';
-const returnUrl = params.get('returnUrl') || '';
+const tm =
+  params.get("tm") || "-";
+
+const hq =
+  params.get("hq") || "-";
+
+const tmCode =
+  params.get("tmCode") || "";
+
+const returnUrl =
+  params.get("returnUrl") || "";
 
 let latitude = null;
 let longitude = null;
 let gpsAccuracy = null;
-let areaLocation = '';
-let exactLocation = '';
+
+let areaLocation = "";
+let exactLocation = "";
 
 let stream = null;
-let busy = false;
+let gpsWatchId = null;
+let gpsTimer = null;
+
 let locationReady = false;
 let exactLocationReady = false;
-let bestAccuracy = Infinity;
-let watchId = null;
-let stopWatchTimer = null;
-let addressTimer = null;
-let addressRequestRunning = false;
-let addressRequestSerial = 0;
-let submitFrame = null;
+let busy = false;
 
-function el(id){
-  return document.getElementById(id);
-}
 
-function isBadLocation(value){
-  const v = String(value || '').trim();
-  return !v || [
-    'Location captured',
-    'Location not available',
-    'Finding exact location...',
-    'Finding area...',
-    'Address unavailable'
-  ].indexOf(v) >= 0;
-}
+/* =====================================================
+   DISPLAY
+===================================================== */
+
+document.getElementById("tm")
+  .textContent =
+  tm;
+
+document.getElementById("hq")
+  .textContent =
+  hq;
+
+document.getElementById("area")
+  .textContent =
+  "Acquiring precise GPS...";
+
+document.getElementById("exact")
+  .textContent =
+  "Waiting for exact address...";
+
+
+/* =====================================================
+   CAPTURE BUTTON STATE
+===================================================== */
 
 function updateCaptureAvailability(){
-  const btn = el('capture');
-  btn.disabled = !(
-    stream &&
-    locationReady &&
-    exactLocationReady &&
-    latitude !== null &&
-    longitude !== null &&
-    !isBadLocation(exactLocation)
-  );
+
+  const button =
+    document.getElementById("capture");
+
+  button.disabled =
+    !(
+      stream &&
+      locationReady &&
+      exactLocationReady &&
+      exactLocation
+    );
 }
+
+
+/* =====================================================
+   STOP CAMERA
+===================================================== */
 
 function stopCamera(){
+
   if(stream){
-    stream.getTracks().forEach(function(track){
-      try{ track.stop(); }catch(e){}
-    });
+
+    stream
+      .getTracks()
+      .forEach(
+        function(track){
+          track.stop();
+        }
+      );
+
     stream = null;
   }
+
 }
 
-function stopGPSWatch(){
-  if(watchId !== null){
-    try{ navigator.geolocation.clearWatch(watchId); }catch(e){}
-    watchId = null;
-  }
-  if(stopWatchTimer){
-    clearTimeout(stopWatchTimer);
-    stopWatchTimer = null;
-  }
-}
 
-function requestExactAddress(lat, lon){
-
-  if(!returnUrl || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
-
-  addressRequestRunning = true;
-  const serial = ++addressRequestSerial;
-  const callbackName = '__aurumGPS_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-  let script = null;
-  let finished = false;
-
-  const badValues = [
-    'Location captured',
-    'Location not available',
-    'Finding exact location...',
-    'Finding area...',
-    'Address unavailable'
-  ];
-
-  function cleanup(){
-    if(script && script.parentNode){
-      try{ script.parentNode.removeChild(script); }catch(e){}
-    }
-    try{ delete window[callbackName]; }catch(e){}
-  }
-
-  function finish(data){
-    if(finished) return;
-    finished = true;
-    addressRequestRunning = false;
-    cleanup();
-
-    /* Ignore stale responses from an older GPS position. */
-    if(serial !== addressRequestSerial) return;
-
-    data = data || {};
-
-    const exact = String(data.exactLocation || '').trim();
-    const area = String(data.areaLocation || '').trim();
-
-    if(exact && badValues.indexOf(exact) === -1){
-      exactLocation = exact;
-      areaLocation = area || exact;
-      exactLocationReady = true;
-
-      el('area').textContent = areaLocation;
-      el('exact').textContent = exactLocation;
-
-      el('status').textContent =
-        '✓ Camera + exact location ready' +
-        (gpsAccuracy !== null ? ' • ±' + Math.round(gpsAccuracy) + ' m' : '') +
-        ' — capture when ready';
-      el('status').style.color = '#08714f';
-      el('msg').textContent = '';
-
-    }else{
-      exactLocation = '';
-      exactLocationReady = false;
-      el('exact').textContent = 'Waiting for exact address...';
-      el('status').textContent =
-        'GPS received • exact address unavailable yet';
-      el('status').style.color = '#b3261e';
-      el('msg').textContent =
-        'Live GPS is available, but the exact address has not been returned yet. Please wait a moment.';
-      el('msg').style.color = '#b3261e';
-    }
-
-    updateCaptureAvailability();
-  }
-
-  window[callbackName] = finish;
-
-  try{
-    const apiUrl = new URL(returnUrl);
-    apiUrl.search = '';
-    apiUrl.hash = '';
-    apiUrl.searchParams.set('api','getGPSLocationDetails');
-    apiUrl.searchParams.set('arg0',String(lat));
-    apiUrl.searchParams.set('arg1',String(lon));
-    apiUrl.searchParams.set('callback',callbackName);
-    apiUrl.searchParams.set('_',String(Date.now()));
-
-    script = document.createElement('script');
-    script.async = true;
-    script.src = apiUrl.toString();
-    script.onerror = function(){ finish({}); };
-    document.head.appendChild(script);
-
-  }catch(error){
-    finish({});
-    return;
-  }
-
-  setTimeout(function(){
-    if(!finished) finish({});
-  }, 15000);
-}
-
-function applyGPSPosition(position){
-
-  const lat = Number(position.coords.latitude);
-  const lon = Number(position.coords.longitude);
-  const accuracy = Number(position.coords.accuracy);
-
-  if(!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-
-  const usableAccuracy = Number.isFinite(accuracy) ? accuracy : 999999;
-
-  /* Only accept a new reading when it is the first fix or more accurate. */
-  if(latitude !== null && usableAccuracy >= bestAccuracy) return;
-
-  latitude = lat;
-  longitude = lon;
-  gpsAccuracy = Number.isFinite(accuracy) ? accuracy : null;
-  bestAccuracy = usableAccuracy;
-  locationReady = true;
-  exactLocationReady = false;
-  exactLocation = '';
-
-  el('area').textContent = 'Resolving exact address...';
-  el('exact').textContent = 'Waiting for exact address...';
-  el('status').textContent =
-    '✓ Precise GPS received • ±' +
-    Math.round(usableAccuracy) +
-    ' m • resolving address...';
-  el('status').style.color = '#08714f';
-  el('msg').textContent = 'Please wait while the exact location is verified.';
-  el('msg').style.color = '#08714f';
-
-  requestExactAddress(lat,lon);
-  updateCaptureAvailability();
-}
-
-function startPreciseGPS(){
-
-  if(!navigator.geolocation){
-    el('status').textContent = 'Location permission required';
-    el('status').style.color = '#b3261e';
-    el('msg').textContent = 'This browser does not support GPS location.';
-    el('msg').style.color = '#b3261e';
-    updateCaptureAvailability();
-    return;
-  }
-
-  el('status').textContent = 'Requesting precise GPS location...';
-  el('status').style.color = '#08714f';
-  el('msg').textContent = 'Please tap Allow for Location.';
-  el('msg').style.color = '#08714f';
-
-  const options = {
-    enableHighAccuracy: true,
-    timeout: 10000,
-    maximumAge: 0
-  };
-
-  /* One immediate fix keeps the GPS flow responsive. */
-  navigator.geolocation.getCurrentPosition(
-    applyGPSPosition,
-    function(error){
-      if(error && error.code === 1){
-        el('status').textContent = 'Location permission required';
-        el('msg').textContent =
-          'Location access was denied. Chrome Site Settings → Location → Allow for this site, then refresh.';
-      }else{
-        el('status').textContent = 'Waiting for GPS fix...';
-        el('msg').textContent =
-          'Please keep Location enabled and wait for a GPS fix.';
-      }
-      el('status').style.color = '#b3261e';
-      el('msg').style.color = '#b3261e';
-      updateCaptureAvailability();
-    },
-    options
-  );
-
-  /* Watch for a better/ more precise reading while camera is already live. */
-  try{
-    watchId = navigator.geolocation.watchPosition(
-      function(position){
-        applyGPSPosition(position);
-        if(
-          gpsAccuracy !== null &&
-          gpsAccuracy <= 20
-        ){
-          stopGPSWatch();
-        }
-      },
-      function(){ /* keep the first successful reading */ },
-      options
-    );
-
-    stopWatchTimer = setTimeout(function(){
-      stopGPSWatch();
-    }, 7000);
-
-  }catch(error){}
-}
+/* =====================================================
+   REQUEST CAMERA
+===================================================== */
 
 async function startCamera(){
 
-  const captureBtn = el('capture');
-  const retakeBtn = el('retake');
+  const status =
+    document.getElementById("status");
 
-  captureBtn.disabled = true;
-  retakeBtn.style.display = 'none';
-  stopCamera();
+  const msg =
+    document.getElementById("msg");
+
 
   try{
+
     if(!window.isSecureContext){
-      throw new Error('Camera requires a secure HTTPS page.');
+
+      throw new Error(
+        "Camera requires a secure HTTPS page."
+      );
+
     }
 
-    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-      throw new Error('Camera API is not available in this browser.');
+    if(
+      !navigator.mediaDevices ||
+      !navigator.mediaDevices.getUserMedia
+    ){
+
+      throw new Error(
+        "Camera API is not available in this browser."
+      );
+
     }
 
-    el('status').textContent =
-      locationReady
-        ? 'GPS active • requesting camera...'
-        : 'Requesting camera permission...';
-    el('status').style.color = '#08714f';
 
-    stream = await navigator.mediaDevices.getUserMedia({
-      video:{
-        facingMode:{ideal:'user'},
-        width:{ideal:1280},
-        height:{ideal:960}
-      },
-      audio:false
-    });
+    status.textContent =
+      "Requesting Camera permission...";
 
-    const video = el('video');
-    video.srcObject = stream;
+    status.style.color =
+      "#08714f";
+
+
+    const newStream =
+      await navigator.mediaDevices.getUserMedia({
+
+        video:{
+          facingMode:{
+            ideal:"user"
+          },
+
+          width:{
+            ideal:1280
+          },
+
+          height:{
+            ideal:960
+          }
+        },
+
+        audio:false
+
+      });
+
+
+    stream =
+      newStream;
+
+
+    const video =
+      document.getElementById("video");
+
+
+    video.srcObject =
+      stream;
+
+
     await video.play();
 
-    el('status').textContent = exactLocationReady
-      ? '✓ Camera + exact location ready — capture when ready'
-      : '✓ Camera ready • waiting for exact GPS address...';
-    el('status').style.color = '#08714f';
 
-    el('msg').textContent = exactLocationReady
-      ? ''
-      : 'GPS is being verified. Capture will enable automatically after the exact address is confirmed.';
-    el('msg').style.color = '#70809a';
+    status.textContent =
+      exactLocationReady
+        ? "✓ Camera + Exact GPS ready — capture when ready"
+        : "✓ Camera ready • Waiting for exact GPS address...";
+
+
+    status.style.color =
+      exactLocationReady
+        ? "#08714f"
+        : "#b3261e";
+
 
     updateCaptureAvailability();
+
 
   }catch(error){
-    el('status').textContent = 'Camera permission required';
-    el('status').style.color = '#b3261e';
 
-    if(error && error.name === 'NotAllowedError'){
-      el('msg').textContent =
-        'Camera access was denied. Chrome Site Settings → Camera → Allow for giovanni-gautam.github.io, then refresh.';
-    }else if(error && error.name === 'NotFoundError'){
-      el('msg').textContent = 'No camera was found on this device.';
-    }else if(error && error.name === 'NotReadableError'){
-      el('msg').textContent = 'Camera is already being used by another application.';
+    console.error(
+      "Camera Error:",
+      error
+    );
+
+
+    status.textContent =
+      "Camera permission required";
+
+    status.style.color =
+      "#b3261e";
+
+
+    if(
+      error &&
+      error.name === "NotAllowedError"
+    ){
+
+      msg.textContent =
+        "Camera access was denied. Chrome Site Settings → Camera → Allow for giovanni-gautam.github.io, then refresh.";
+
+    }else if(
+      error &&
+      error.name === "NotFoundError"
+    ){
+
+      msg.textContent =
+        "No camera was found on this device.";
+
+    }else if(
+      error &&
+      error.name === "NotReadableError"
+    ){
+
+      msg.textContent =
+        "Camera is already being used by another application.";
+
     }else{
-      el('msg').textContent =
-        (error && error.message) || 'Please allow camera access.';
+
+      msg.textContent =
+        error.message ||
+        "Please allow camera access.";
+
     }
 
-    el('msg').style.color = '#b3261e';
+
     updateCaptureAvailability();
+
   }
 }
 
-function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight){
-  let line = '';
-  const words = String(text || '').split(/\s+/);
-  for(let i=0;i<words.length;i++){
-    const test = line ? line + ' ' + words[i] : words[i];
-    if(ctx.measureText(test).width > maxWidth && line){
-      ctx.fillText(line,x,y);
-      y += lineHeight;
-      line = words[i];
-    }else{
-      line = test;
-    }
+
+/* =====================================================
+   SEND GPS TO AURUM SYNC
+===================================================== */
+
+let bestSentAccuracy = null;
+
+function sendGPSToParent(
+  position
+){
+
+  const coords =
+    position &&
+    position.coords;
+
+  if(!coords){
+    return;
   }
-  if(line) ctx.fillText(line,x,y);
-  return y;
+
+
+  const lat =
+    Number(
+      coords.latitude
+    );
+
+  const lon =
+    Number(
+      coords.longitude
+    );
+
+  const accuracy =
+    Number(
+      coords.accuracy
+    );
+
+
+  if(
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lon)
+  ){
+
+    return;
+  }
+
+
+  /*
+   * Only forward a better/equally useful reading.
+   */
+  if(
+    Number.isFinite(accuracy) &&
+    Number.isFinite(bestSentAccuracy) &&
+    accuracy >= bestSentAccuracy - 2
+  ){
+
+    return;
+  }
+
+
+  latitude =
+    lat;
+
+  longitude =
+    lon;
+
+  gpsAccuracy =
+    Number.isFinite(accuracy)
+      ? accuracy
+      : null;
+
+  bestSentAccuracy =
+    gpsAccuracy;
+
+
+  document.getElementById("area")
+    .textContent =
+    "Resolving exact address...";
+
+
+  document.getElementById("exact")
+    .textContent =
+    "Waiting for exact address...";
+
+
+  document.getElementById("status")
+    .textContent =
+    "✓ Precise GPS received • Verifying address...";
+
+
+  document.getElementById("status")
+    .style.color =
+    "#08714f";
+
+
+  document.getElementById("msg")
+    .textContent =
+    "GPS accuracy • ±" +
+    (
+      gpsAccuracy !== null
+        ? Math.round(gpsAccuracy)
+        : "?"
+    ) +
+    " m. Waiting for exact address verification.";
+
+
+  document.getElementById("msg")
+    .style.color =
+    "#08714f";
+
+
+  if(
+    window.opener &&
+    !window.opener.closed
+  ){
+
+    try{
+
+      window.opener.postMessage(
+        {
+          type:
+            "AURUM_GPS_COORDINATES",
+
+          latitude:
+            latitude,
+
+          longitude:
+            longitude,
+
+          accuracy:
+            gpsAccuracy
+        },
+        "*"
+      );
+
+    }catch(error){
+
+      console.error(
+        "GPS transfer error:",
+        error
+      );
+
+    }
+
+  }
+
+
+  updateCaptureAvailability();
 }
+
+
+/* =====================================================
+   START PRECISE GPS
+===================================================== */
+
+function startPreciseGPS(){
+
+  if(
+    !navigator.geolocation
+  ){
+
+    document.getElementById("status")
+      .textContent =
+      "Location permission required";
+
+
+    document.getElementById("status")
+      .style.color =
+      "#b3261e";
+
+
+    document.getElementById("msg")
+      .textContent =
+      "This device/browser does not support GPS location.";
+
+
+    updateCaptureAvailability();
+
+    return;
+  }
+
+
+  document.getElementById("status")
+    .textContent =
+    "Requesting precise GPS location...";
+
+
+  document.getElementById("status")
+    .style.color =
+    "#08714f";
+
+
+  document.getElementById("msg")
+    .textContent =
+    "Please tap Allow for Location.";
+
+
+  /*
+   * Immediate high-accuracy fix.
+   */
+  navigator.geolocation.getCurrentPosition(
+
+    function(position){
+      sendGPSToParent(position);
+    },
+
+    function(error){
+
+      if(
+        error &&
+        error.code === 1
+      ){
+
+        document.getElementById("status")
+          .textContent =
+          "Location permission required";
+
+        document.getElementById("msg")
+          .textContent =
+          "Location access was denied. Chrome Site Settings → Location → Allow, then refresh.";
+
+      }else{
+
+        document.getElementById("status")
+          .textContent =
+          "Unable to acquire precise GPS";
+
+        document.getElementById("msg")
+          .textContent =
+          "Please allow Location access and try again.";
+
+      }
+
+      document.getElementById("status")
+        .style.color =
+        "#b3261e";
+
+      updateCaptureAvailability();
+
+    },
+
+    {
+      enableHighAccuracy:true,
+      timeout:15000,
+      maximumAge:0
+    }
+
+  );
+
+
+  /*
+   * Continue watching briefly so we can use the best
+   * accuracy reported by the device.
+   */
+  try{
+
+    gpsWatchId =
+      navigator.geolocation.watchPosition(
+
+        function(position){
+          sendGPSToParent(position);
+        },
+
+        function(error){
+          console.warn(
+            "GPS watch error:",
+            error
+          );
+        },
+
+        {
+          enableHighAccuracy:true,
+          timeout:10000,
+          maximumAge:0
+        }
+
+      );
+
+
+    gpsTimer =
+      setTimeout(
+        function(){
+
+          if(
+            gpsWatchId !== null
+          ){
+
+            navigator.geolocation.clearWatch(
+              gpsWatchId
+            );
+
+            gpsWatchId =
+              null;
+
+          }
+
+        },
+        7000
+      );
+
+  }catch(error){
+
+    console.warn(
+      "GPS watch unavailable:",
+      error
+    );
+
+  }
+
+}
+
+
+/* =====================================================
+   RECEIVE VERIFIED ADDRESS FROM PARENT
+===================================================== */
+
+window.addEventListener(
+  "message",
+  function(event){
+
+    if(
+      !window.opener ||
+      event.source !== window.opener
+    ){
+
+      return;
+    }
+
+
+    const data =
+      event.data || {};
+
+
+    if(
+      data.type ===
+      "AURUM_GPS_LOCATION_WAITING"
+    ){
+
+      exactLocationReady =
+        false;
+
+      document.getElementById("status")
+        .textContent =
+        "✓ GPS received • Exact address still resolving...";
+
+      document.getElementById("status")
+        .style.color =
+        "#b3261e";
+
+      document.getElementById("msg")
+        .textContent =
+        "Please wait a moment for exact GPS address verification.";
+
+      updateCaptureAvailability();
+
+      return;
+    }
+
+
+    if(
+      data.type ===
+      "AURUM_GPS_LOCATION_ERROR"
+    ){
+
+      exactLocationReady =
+        false;
+
+      document.getElementById("exact")
+        .textContent =
+        "Exact address unavailable";
+
+      document.getElementById("status")
+        .textContent =
+        "GPS received • Exact address unavailable";
+
+      document.getElementById("status")
+        .style.color =
+        "#b3261e";
+
+      document.getElementById("msg")
+        .textContent =
+        data.message ||
+        "Exact GPS address could not be resolved. Please try again.";
+
+      updateCaptureAvailability();
+
+      return;
+    }
+
+
+    if(
+      data.type ===
+      "AURUM_GPS_LOCATION_RESOLVED"
+    ){
+
+      latitude =
+        Number(data.latitude);
+
+      longitude =
+        Number(data.longitude);
+
+      gpsAccuracy =
+        Number(data.accuracy);
+
+      if(
+        !Number.isFinite(gpsAccuracy)
+      ){
+
+        gpsAccuracy =
+          null;
+
+      }
+
+
+      areaLocation =
+        String(
+          data.area || ""
+        ).trim();
+
+      exactLocation =
+        String(
+          data.exactLocation || ""
+        ).trim();
+
+
+      if(
+        !exactLocation ||
+        exactLocation === "Location captured" ||
+        exactLocation === "Location not available"
+      ){
+
+        exactLocationReady =
+          false;
+
+        document.getElementById("exact")
+          .textContent =
+          "Exact address unavailable";
+
+        document.getElementById("status")
+          .textContent =
+          "GPS received • Exact address unavailable";
+
+        document.getElementById("status")
+          .style.color =
+          "#b3261e";
+
+        updateCaptureAvailability();
+
+        return;
+      }
+
+
+      locationReady =
+        true;
+
+      exactLocationReady =
+        true;
+
+
+      document.getElementById("area")
+        .textContent =
+        areaLocation ||
+        exactLocation;
+
+
+      document.getElementById("exact")
+        .textContent =
+        exactLocation;
+
+
+      document.getElementById("status")
+        .textContent =
+        "✓ Camera + Exact GPS ready" +
+        (
+          gpsAccuracy !== null
+            ? " • ±" +
+              Math.round(gpsAccuracy) +
+              " m"
+            : ""
+        ) +
+        " — capture when ready";
+
+
+      document.getElementById("status")
+        .style.color =
+        "#08714f";
+
+
+      document.getElementById("msg")
+        .textContent =
+        "Exact GPS address verified. You can capture now.";
+
+
+      document.getElementById("msg")
+        .style.color =
+        "#08714f";
+
+
+      updateCaptureAvailability();
+
+      return;
+    }
+
+
+    if(
+      data.type ===
+      "AURUM_GPS_SELFIE_SAVED"
+    ){
+
+      document.getElementById("status")
+        .textContent =
+        "✓ LIVE GPS SELFIE SAVED";
+
+      document.getElementById("status")
+        .style.color =
+        "#08714f";
+
+      document.getElementById("msg")
+        .textContent =
+        data.message ||
+        "Selfie saved successfully. Returning to Aurum Sync...";
+
+      document.getElementById("msg")
+        .style.color =
+        "#08714f";
+
+
+      stopCamera();
+
+
+      setTimeout(
+        function(){
+
+          try{
+            window.close();
+          }catch(error){}
+
+        },
+        700
+      );
+
+      return;
+    }
+
+
+    if(
+      data.type ===
+      "AURUM_GPS_SELFIE_SAVE_FAILED"
+    ){
+
+      busy =
+        false;
+
+      document.getElementById("status")
+        .textContent =
+        "Submission failed";
+
+      document.getElementById("status")
+        .style.color =
+        "#b3261e";
+
+      document.getElementById("msg")
+        .textContent =
+        data.message ||
+        "Selfie could not be saved. Please try again.";
+
+      document.getElementById("msg")
+        .style.color =
+        "#b3261e";
+
+
+      document.getElementById("capture")
+        .disabled =
+        false;
+
+
+      return;
+    }
+
+  }
+);
+
+
+/* =====================================================
+   CAPTURE STAMPED SELFIE
+===================================================== */
 
 function capture(){
 
@@ -653,226 +1124,661 @@ function capture(){
     !stream ||
     !locationReady ||
     !exactLocationReady ||
-    isBadLocation(exactLocation) ||
+    !exactLocation ||
     latitude === null ||
     longitude === null
   ){
-    el('msg').textContent =
-      'Please wait until camera, precise GPS and exact address are all ready.';
-    el('msg').style.color = '#b3261e';
+
     return;
   }
 
-  busy = true;
-  const video = el('video');
-  const canvas = el('canvas');
-  const ctx = canvas.getContext('2d');
 
-  if(!video.videoWidth){
-    busy = false;
-    return;
-  }
+  busy =
+    true;
 
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
 
-  /* Mirror the selfie exactly as seen on screen. */
-  ctx.save();
-  ctx.translate(canvas.width,0);
-  ctx.scale(-1,1);
-  ctx.drawImage(video,0,0,canvas.width,canvas.height);
-  ctx.restore();
+  document.getElementById("capture")
+    .disabled =
+    true;
 
-  /* Premium bottom stamp with real GPS + exact location. */
-  const pad = Math.max(24, canvas.width * 0.03);
-  const stampHeight = Math.max(190, canvas.height * 0.29);
-  const stampY = canvas.height - stampHeight;
 
-  ctx.fillStyle = 'rgba(4,25,43,.84)';
-  ctx.fillRect(0,stampY,canvas.width,stampHeight);
+  const video =
+    document.getElementById("video");
 
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '800 ' + Math.max(22,canvas.width*0.030) + 'px Arial';
-  ctx.fillText('AURUM • LIVE GPS VERIFIED',pad,stampY+38);
+  const canvas =
+    document.getElementById("canvas");
 
-  ctx.font = '700 ' + Math.max(18,canvas.width*0.024) + 'px Arial';
-  ctx.fillText(tm,pad,stampY+72);
+  const ctx =
+    canvas.getContext("2d");
 
-  ctx.font = '600 ' + Math.max(14,canvas.width*0.018) + 'px Arial';
-  ctx.fillText(hq,pad,stampY+98);
-
-  ctx.font = '700 ' + Math.max(15,canvas.width*0.020) + 'px Arial';
-  let y = stampY + 128;
-  y = drawWrappedText(
-    ctx,
-    '📍 EXACT LOCATION: ' + exactLocation,
-    pad,
-    y,
-    canvas.width - pad*2,
-    Math.max(20,canvas.width*0.026)
-  );
-
-  ctx.font = '600 ' + Math.max(13,canvas.width*0.017) + 'px Arial';
-  const gpsLine =
-    'GPS: ' +
-    Number(latitude).toFixed(6) +
-    ', ' +
-    Number(longitude).toFixed(6) +
-    ' • Accuracy ±' +
-    (gpsAccuracy !== null ? Math.round(gpsAccuracy) : '?') +
-    ' m';
-  ctx.fillText(gpsLine,pad,Math.min(stampY+stampHeight-20,y+26));
-
-  const image = canvas.toDataURL('image/jpeg',0.90);
-  el('capture').disabled = true;
-
-  submitCapture(image);
-}
-
-function submitCapture(image){
 
   if(
-    !returnUrl ||
-    !tmCode ||
-    latitude === null ||
-    longitude === null ||
-    !exactLocationReady ||
-    isBadLocation(exactLocation)
+    !video.videoWidth ||
+    !video.videoHeight
   ){
-    el('status').textContent = 'Submission data missing';
-    el('status').style.color = '#b3261e';
-    el('msg').textContent =
-      'Precise GPS and exact address are required before submission.';
-    el('msg').style.color = '#b3261e';
-    busy = false;
+
+    busy =
+      false;
+
     updateCaptureAvailability();
+
     return;
   }
 
-  el('status').textContent = '✓ Selfie captured • Saving to Aurum Sync...';
-  el('status').style.color = '#08714f';
-  el('msg').textContent = 'Please wait...';
-  el('msg').style.color = '#08714f';
 
-  stopCamera();
-  stopGPSWatch();
+  canvas.width =
+    video.videoWidth;
 
-  /* Hidden iframe POST keeps this camera page alive. */
-  if(submitFrame && submitFrame.parentNode){
-    try{ submitFrame.parentNode.removeChild(submitFrame); }catch(e){}
-  }
+  canvas.height =
+    video.videoHeight;
 
-  const frameName = 'aurumSubmitFrame_' + Date.now();
-  submitFrame = document.createElement('iframe');
-  submitFrame.name = frameName;
-  submitFrame.style.display = 'none';
-  document.body.appendChild(submitFrame);
 
-  const form = document.createElement('form');
-  form.method = 'POST';
-  form.action = returnUrl;
-  form.target = frameName;
-  form.style.display = 'none';
+  /*
+   * Mirror selfie.
+   */
+  ctx.save();
 
-  function addField(name,value){
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = name;
-    input.value = value == null ? '' : String(value);
-    form.appendChild(input);
-  }
+  ctx.translate(
+    canvas.width,
+    0
+  );
 
-  addField('tmCode',tmCode);
-  addField('latitude',latitude);
-  addField('longitude',longitude);
-  addField('image',image);
-  addField('area',areaLocation);
-  addField('exactLocation',exactLocation);
-  addField('returnUrl',returnUrl);
+  ctx.scale(
+    -1,
+    1
+  );
 
-  document.body.appendChild(form);
-  form.submit();
+  ctx.drawImage(
+    video,
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
 
-  /* If the server takes longer, keep the user informed. */
-  setTimeout(function(){
-    if(busy){
-      el('msg').textContent = 'Saving selfie securely...';
+  ctx.restore();
+
+
+  /*
+   * ---------------------------------------------------
+   * VERIFIED GPS STAMP
+   * ---------------------------------------------------
+   */
+  const pad =
+    Math.max(
+      24,
+      Math.round(
+        canvas.width * 0.026
+      )
+    );
+
+  const titleSize =
+    Math.max(
+      22,
+      Math.round(
+        canvas.width * 0.032
+      )
+    );
+
+  const bodySize =
+    Math.max(
+      17,
+      Math.round(
+        canvas.width * 0.021
+      )
+    );
+
+  const smallSize =
+    Math.max(
+      15,
+      Math.round(
+        canvas.width * 0.018
+      )
+    );
+
+  const maxTextWidth =
+    canvas.width -
+    (pad * 2);
+
+
+  function wrapText(
+    text,
+    font,
+    maxWidth
+  ){
+
+    ctx.font =
+      font;
+
+    const words =
+      String(text || "")
+        .split(/\s+/)
+        .filter(Boolean);
+
+    const lines = [];
+
+    let line =
+      "";
+
+    words.forEach(
+      function(word){
+
+        const test =
+          line
+            ? line +
+              " " +
+              word
+            : word;
+
+
+        if(
+          ctx.measureText(test)
+            .width >
+          maxWidth &&
+          line
+        ){
+
+          lines.push(
+            line
+          );
+
+          line =
+            word;
+
+        }else{
+
+          line =
+            test;
+
+        }
+
+      }
+    );
+
+
+    if(line){
+      lines.push(line);
     }
-  },1500);
+
+
+    return lines.length
+      ? lines
+      : [""];
+  }
+
+
+  const locationLines =
+    wrapText(
+      exactLocation,
+      "700 " +
+      bodySize +
+      "px Arial",
+      maxTextWidth
+    );
+
+
+  const gpsText =
+    "GPS: " +
+    Number(latitude)
+      .toFixed(6) +
+    ", " +
+    Number(longitude)
+      .toFixed(6) +
+    (
+      gpsAccuracy !== null
+        ? " • Accuracy ±" +
+          Math.round(
+            gpsAccuracy
+          ) +
+          " m"
+        : ""
+    );
+
+
+  const dateText =
+    new Date()
+      .toLocaleString(
+        "en-IN",
+        {
+          day:"2-digit",
+          month:"short",
+          year:"numeric",
+          hour:"2-digit",
+          minute:"2-digit",
+          second:"2-digit"
+        }
+      );
+
+
+  const lineHeight =
+    Math.max(
+      24,
+      Math.round(
+        canvas.width * 0.027
+      )
+    );
+
+
+  const stampHeight =
+    Math.max(
+      190,
+      (
+        34 +
+        titleSize +
+        13 +
+        bodySize +
+        10 +
+        smallSize +
+        14 +
+        bodySize +
+        8 +
+        locationLines.length *
+          lineHeight +
+        12 +
+        smallSize +
+        20
+      )
+    );
+
+
+  const stampY =
+    canvas.height -
+    stampHeight;
+
+
+  ctx.save();
+
+
+  ctx.fillStyle =
+    "rgba(0,0,0,0.80)";
+
+  ctx.fillRect(
+    0,
+    stampY,
+    canvas.width,
+    stampHeight
+  );
+
+
+  let y =
+    stampY +
+    34;
+
+
+  ctx.fillStyle =
+    "#ffffff";
+
+
+  ctx.font =
+    "800 " +
+    titleSize +
+    "px Arial";
+
+
+  ctx.fillText(
+    "AURUM • LIVE GPS VERIFIED",
+    pad,
+    y
+  );
+
+
+  y +=
+    titleSize +
+    13;
+
+
+  ctx.font =
+    "700 " +
+    bodySize +
+    "px Arial";
+
+
+  ctx.fillText(
+    "TM: " +
+    tm,
+    pad,
+    y
+  );
+
+
+  y +=
+    bodySize +
+    10;
+
+
+  ctx.font =
+    "600 " +
+    smallSize +
+    "px Arial";
+
+
+  ctx.fillText(
+    "DATE / TIME: " +
+    dateText,
+    pad,
+    y
+  );
+
+
+  y +=
+    smallSize +
+    14;
+
+
+  ctx.font =
+    "700 " +
+    bodySize +
+    "px Arial";
+
+
+  ctx.fillText(
+    "📍 EXACT LOCATION:",
+    pad,
+    y
+  );
+
+
+  y +=
+    bodySize +
+    8;
+
+
+  ctx.font =
+    "700 " +
+    bodySize +
+    "px Arial";
+
+
+  locationLines.forEach(
+    function(line){
+
+      ctx.fillText(
+        line,
+        pad,
+        y
+      );
+
+      y +=
+        lineHeight;
+    }
+  );
+
+
+  ctx.font =
+    "600 " +
+    smallSize +
+    "px Arial";
+
+
+  ctx.fillText(
+    gpsText,
+    pad,
+    y + 2
+  );
+
+
+  ctx.restore();
+
+
+  const image =
+    canvas.toDataURL(
+      "image/jpeg",
+      0.92
+    );
+
+
+  document.getElementById("status")
+    .textContent =
+    "✓ Selfie captured • Saving to Aurum Sync...";
+
+  document.getElementById("status")
+    .style.color =
+    "#08714f";
+
+
+  document.getElementById("msg")
+    .textContent =
+    "Please wait while the stamped selfie is saved.";
+
+  document.getElementById("msg")
+    .style.color =
+    "#08714f";
+
+
+  /*
+   * Send the stamped image directly to the parent page.
+   * No fetch, CORS, form navigation or blank response page.
+   */
+  if(
+    window.opener &&
+    !window.opener.closed
+  ){
+
+    try{
+
+      window.opener.postMessage(
+        {
+          type:
+            "AURUM_GPS_SELFIE_CAPTURE",
+
+          image:
+            image,
+
+          tmCode:
+            tmCode,
+
+          latitude:
+            Number(latitude),
+
+          longitude:
+            Number(longitude),
+
+          accuracy:
+            gpsAccuracy,
+
+          area:
+            areaLocation,
+
+          exactLocation:
+            exactLocation
+
+        },
+        "*"
+      );
+
+      stopCamera();
+
+    }catch(error){
+
+      console.error(
+        "Capture transfer error:",
+        error
+      );
+
+      busy =
+        false;
+
+      document.getElementById("status")
+        .textContent =
+        "Transfer failed";
+
+      document.getElementById("status")
+        .style.color =
+        "#b3261e";
+
+      document.getElementById("msg")
+        .textContent =
+        "Unable to send the selfie back to Aurum Sync. Please try again.";
+
+      document.getElementById("msg")
+        .style.color =
+        "#b3261e";
+
+      updateCaptureAvailability();
+
+    }
+
+  }else{
+
+    busy =
+      false;
+
+    document.getElementById("status")
+      .textContent =
+      "Aurum Sync window unavailable";
+
+    document.getElementById("status")
+      .style.color =
+      "#b3261e";
+
+    document.getElementById("msg")
+      .textContent =
+      "Please reopen LIVE GPS SELFIE from Aurum Sync.";
+
+    document.getElementById("msg")
+      .style.color =
+      "#b3261e";
+
+    updateCaptureAvailability();
+
+  }
+
 }
 
-/* Server response arrives in the hidden iframe. */
-window.addEventListener('message',function(event){
-  const data = event.data || {};
 
-  if(data.type !== 'AURUM_SERVER_SAVE_OK' || data.success !== true){
-    return;
-  }
+/* =====================================================
+   RETAKE
+===================================================== */
 
-  busy = false;
+function retake(){
 
-  el('status').textContent = '✓ Selfie saved successfully';
-  el('status').style.color = '#08714f';
-  el('msg').textContent =
-    data.message || 'LIVE GPS SELFIE submitted successfully.';
-  el('msg').style.color = '#08714f';
+  busy =
+    false;
 
-  /* Send the confirmed server result to the original Aurum Sync window. */
-  try{
-    if(window.opener && !window.opener.closed){
-      window.opener.postMessage({
-        type:'AURUM_GPS_SELFIE_SAVED',
-        success:true,
-        message:data.message || 'LIVE GPS SELFIE submitted successfully.',
-        exactLocation:data.exactLocation || exactLocation,
-        area:data.area || areaLocation
-      }, '*');
-    }
-  }catch(e){}
+  document.getElementById("capture")
+    .disabled =
+    !(
+      stream &&
+      locationReady &&
+      exactLocationReady &&
+      exactLocation
+    );
 
-  setTimeout(function(){
-    try{ window.close(); }catch(e){}
-  },700);
-});
 
-/* Retake without reloading the page. */
-el('retake').addEventListener('click',function(){
-  busy = false;
-  exactLocationReady = !isBadLocation(exactLocation);
+  document.getElementById("retake")
+    .style.display =
+    "none";
+
+
+  document.getElementById("msg")
+    .textContent =
+    "";
+
+
   startCamera();
-  startPreciseGPS();
-});
+
+}
+
+
+/* =====================================================
+   CLOSE CAMERA
+===================================================== */
 
 function goBack(){
+
   stopCamera();
-  stopGPSWatch();
-  if(returnUrl){
-    window.close();
-    setTimeout(function(){
-      try{ window.location.href = returnUrl; }catch(e){}
-    },200);
-  }else{
-    window.history.back();
+
+  if(
+    gpsWatchId !== null
+  ){
+
+    try{
+
+      navigator.geolocation
+        .clearWatch(
+          gpsWatchId
+        );
+
+    }catch(error){}
+
+    gpsWatchId =
+      null;
   }
+
+
+  if(
+    gpsTimer !== null
+  ){
+
+    clearTimeout(
+      gpsTimer
+    );
+
+    gpsTimer =
+      null;
+  }
+
+
+  if(returnUrl){
+
+    window.location.href =
+      returnUrl;
+
+  }else{
+
+    window.history.back();
+
+  }
+
 }
 
-window.addEventListener('load',function(){
-  el('tm').textContent = tm;
-  el('hq').textContent = hq;
-  el('area').textContent = 'Acquiring precise GPS...';
-  el('exact').textContent = 'Waiting for exact location...';
-  el('status').textContent = 'Starting camera + precise GPS...';
-  el('status').style.color = '#08714f';
 
-  /* IMPORTANT: camera + GPS start in parallel, so the window is immediate. */
-  startCamera();
-  startPreciseGPS();
-});
+/* =====================================================
+   START
+===================================================== */
 
-window.addEventListener('beforeunload',function(){
-  stopCamera();
-  stopGPSWatch();
-});
+window.addEventListener(
+  "load",
+  function(){
+
+    /*
+     * Camera and GPS start immediately.
+     * They run in parallel to minimize delay.
+     */
+    startCamera();
+    startPreciseGPS();
+
+  }
+);
+
+
+/* =====================================================
+   STOP ON EXIT
+===================================================== */
+
+window.addEventListener(
+  "beforeunload",
+  function(){
+
+    stopCamera();
+
+    if(
+      gpsWatchId !== null
+    ){
+
+      try{
+
+        navigator.geolocation
+          .clearWatch(
+            gpsWatchId
+          );
+
+      }catch(error){}
+
+    }
+
+  }
+);
 </script>
 
 </body>
